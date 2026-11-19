@@ -3,7 +3,8 @@ import { useBuilder } from './builderStore'
 import { example } from './examples'
 import { generatePine } from '../codegen/generator'
 import { generateCandles } from '../data/sampleData'
-import { SAMPLE_MARKET } from '../data/market'
+import { CUSTOM_MARKET, SAMPLE_MARKET } from '../data/market'
+import { canConnect } from './connect'
 
 const gen = () => {
   const s = useBuilder.getState()
@@ -14,7 +15,8 @@ describe('builder store', () => {
   beforeEach(() => {
     useBuilder.setState({
       nodes: [], edges: [], runResult: null, isRunning: false,
-      market: SAMPLE_MARKET, candles: generateCandles(300, 42), dataState: 'sample',
+      market: SAMPLE_MARKET, candles: generateCandles(300, 42), candlesTf: 'D', dataState: 'sample',
+      custom: null, holdout: false,
     })
   })
 
@@ -74,6 +76,89 @@ describe('builder store', () => {
     const { nodes, edges } = useBuilder.getState()
     expect(nodes.some((n) => n.id === 'n2')).toBe(false)
     expect(edges.some((e) => e.source === 'n2' || e.target === 'n2')).toBe(false)
+  })
+
+  it('a new block starts with the settings of its kind', () => {
+    const add = (key: string, type: 'indicator' | 'condition') => {
+      useBuilder.getState().addBlock(key, type, { x: 0, y: 0 })
+      return useBuilder.getState().nodes.at(-1)!.data
+    }
+    expect(add('supertrend', 'indicator')).toEqual({
+      kind: 'indicator', indicator: 'supertrend', length: 10, source: 'close', params: { factor: 3 },
+    })
+    expect(add('htf_ema', 'indicator')).toMatchObject({ length: 50, tf: '240' })
+    expect(add('session', 'condition')).toMatchObject({ from: 8, to: 17, tz: 'UTC' })
+    expect(add('weekdays', 'condition')).toMatchObject({ days: '23456', tz: 'UTC' })
+    expect(add('rising', 'condition')).toMatchObject({ length: 3 })
+  })
+
+  it('changing what a block is starts from its defaults and drops the wires that no longer fit', () => {
+    useBuilder.getState().applyState({ ...example('pro'), market: SAMPLE_MARKET })
+    // n1 is the Supertrend: its "line" output feeds two conditions and a plot.
+    useBuilder.getState().updateNodeData('n1', { indicator: 'bb' })
+    let { nodes, edges } = useBuilder.getState()
+    expect(nodes.find((n) => n.id === 'n1')?.data).toEqual({
+      kind: 'indicator', indicator: 'bb', length: 20, source: 'close', params: { mult: 2 },
+    })
+    const fromN1 = edges.filter((e) => e.source === 'n1')
+    expect(fromN1).toHaveLength(3)
+    expect(fromN1.every((e) => e.sourceHandle === 'basis')).toBe(true)
+    // Whatever is left is a wire the canvas would let the user draw.
+    for (const e of edges) expect(canConnect(nodes, [], e), e.id).toBe(true)
+    expect(gen().error).toBeUndefined()
+
+    // An ordinary edit (a length) touches neither the other fields nor the wires.
+    useBuilder.getState().updateNodeData('n1', { length: 30 })
+    expect(useBuilder.getState().edges).toBe(edges)
+    expect(useBuilder.getState().nodes.find((n) => n.id === 'n1')?.data).toMatchObject({ length: 30, params: { mult: 2 } })
+
+    // A comparison turned into another comparison keeps both wires...
+    useBuilder.getState().updateNodeData('n6', { condition: 'lt' })
+    expect(useBuilder.getState().edges.filter((e) => e.target === 'n6')).toHaveLength(2)
+    // ...and AND turned into OR keeps both conditions.
+    useBuilder.getState().updateNodeData('n7', { condition: 'or' })
+    ;({ nodes, edges } = useBuilder.getState())
+    expect(nodes.find((n) => n.id === 'n7')?.data).toMatchObject({ condition: 'or' })
+    expect(edges.filter((e) => e.target === 'n7')).toHaveLength(2)
+  })
+
+  it('a price file replaces the candles and is run on its own timeframe', async () => {
+    const hour = 3600000
+    const rows = Array.from({ length: 400 }, (_, i) => {
+      const price = 100 + Math.sin(i / 9) * 8 + i * 0.01
+      return `${(Date.UTC(2024, 0, 2) + i * hour) / 1000},${price},${price + 1},${price - 1},${price + 0.5},10`
+    })
+    const error = useBuilder.getState().importCsv('XAUUSD_H1.csv', ['time,open,high,low,close,volume', ...rows].join('\n'))
+    expect(error).toBeNull()
+    const s = useBuilder.getState()
+    expect(s.market).toBe(CUSTOM_MARKET)
+    expect(s.dataState).toBe('custom')
+    expect(s.candles).toHaveLength(400)
+    expect(s.candlesTf).toBe('60')
+    expect(s.custom?.name).toBe('XAUUSD_H1')
+
+    useBuilder.getState().applyState({ ...example('ema'), market: undefined })
+    await useBuilder.getState().run(gen())
+    expect(useBuilder.getState().runResult?.ok).toBe(true)
+    expect(useBuilder.getState().runResult?.barCount).toBe(400)
+    // The file is not part of what gets saved or shared.
+    expect(JSON.stringify(useBuilder.getState().snapshot())).not.toContain('"candles"')
+  })
+
+  it('a file that cannot be read changes nothing and says why', () => {
+    const before = useBuilder.getState().candles
+    expect(useBuilder.getState().importCsv('notes.txt', 'hello world')).toBe('csv.columns')
+    expect(useBuilder.getState().importCsv('empty.csv', '')).toBe('csv.empty')
+    expect(useBuilder.getState().candles).toBe(before)
+    expect(useBuilder.getState().market).toBe(SAMPLE_MARKET)
+  })
+
+  it('the depth only takes values on offer', () => {
+    useBuilder.setState({ depth: 3000 })
+    useBuilder.getState().setDepth(77)
+    expect(useBuilder.getState().depth).toBe(3000)
+    useBuilder.setState({ depth: 5000 })
+    expect(useBuilder.getState().snapshot().depth).toBe(5000)
   })
 
   it('new blocks get an id nobody else has', () => {

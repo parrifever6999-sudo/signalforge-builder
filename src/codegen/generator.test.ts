@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { generatePine } from './generator'
 import { runPine } from '../engine/pineRunner'
 import { generateCandles } from '../data/sampleData'
-import { node, edge, settings, emaCrossGraph, rsiGraph, undeclared } from './testkit'
-import { INDICATORS } from '../blocks/definitions'
+import { node, edge, settings, emaCrossGraph, rsiGraph, undeclared, ind, plot, hourlyCandles } from './testkit'
+import { INDICATORS, PALETTE } from '../blocks/definitions'
 import type { IndicatorKind } from '../types'
 
 describe('generatePine: shared blocks', () => {
@@ -283,17 +283,27 @@ describe('generatePine: which pane a plot belongs to', () => {
 describe('every indicator block', () => {
   const kinds = Object.keys(INDICATORS) as IndicatorKind[]
 
-  it.each(kinds)('%s produces values in the engine', async (kind) => {
-    const def = INDICATORS[kind]
-    const nodes = [
-      node('i', { kind: 'indicator', indicator: kind, length: def.defaultLength, source: def.defaultSource }),
-      node('p', { kind: 'plot', title: 'P', color: '#2563eb', style: 'line' }),
-    ]
-    const { code, plotMeta, error } = generatePine(nodes, [edge('i', 'p')], kind)
+  // Every output of every block, with the settings a new block starts with.
+  const outputs = kinds.flatMap((kind) => INDICATORS[kind].outputs.map((o) => [kind, o.key || '(single)', o.key] as const))
+
+  it.each(outputs)('%s %s produces values in the engine', async (kind, _name, out) => {
+    const nodes = [ind('i', kind), plot('p')]
+    const { code, plotMeta, error, warnings } = generatePine(nodes, [edge('i', 'p', null, out || null)], kind)
     expect(error).toBeUndefined()
-    const result = await runPine(code, generateCandles(300, 42), plotMeta)
+    expect(warnings).toEqual([])
+    expect(undeclared(code)).toEqual([])
+    const result = await runPine(code, hourlyCandles(600), plotMeta, { timeframe: '60' })
     expect(result.error).toBeUndefined()
-    expect(result.plots[0].data.filter((v) => Number.isFinite(v)).length).toBeGreaterThan(200)
+    const values = result.plots[0].data.filter((v) => Number.isFinite(v))
+    expect(values.length).toBeGreaterThan(450)
+    // A series stuck on one value would mean the block is not wired to the data.
+    expect(new Set(values).size).toBeGreaterThan(1)
+  })
+
+  it('the palette offers every block that is not kept only for old saves', () => {
+    const offered = PALETTE.filter((b) => b.type === 'indicator').map((b) => b.key).sort()
+    expect(offered).toEqual(kinds.filter((k) => !INDICATORS[k].legacy).sort())
+    expect(offered.length).toBeGreaterThanOrEqual(49)
   })
 
   it('blocks without a source never receive one', () => {

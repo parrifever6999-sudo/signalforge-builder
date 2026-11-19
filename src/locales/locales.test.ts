@@ -4,8 +4,11 @@ import { join } from 'node:path'
 import en from './en.json'
 import es from './es.json'
 import { translate } from '../i18n'
-import { ACTIONS, CONDITIONS, PALETTE, PALETTE_GROUPS, PLOT_COLORS, PLOT_STYLES } from '../blocks/definitions'
+import {
+  ACTIONS, CONDITIONS, HTF_TIMEFRAMES, INDICATORS, PALETTE, PALETTE_GROUPS, PLOT_COLORS, PLOT_STYLES, WEEKDAYS,
+} from '../blocks/definitions'
 import { EXAMPLES } from '../store/examples'
+import { MARKET_GROUPS } from '../data/market'
 
 const SRC = join(__dirname, '..')
 
@@ -52,9 +55,21 @@ describe('locales', () => {
     for (const c of PLOT_COLORS) used.add(c.pine)
     for (const s of PLOT_STYLES) used.add(`style.${s.key}`)
     for (const k of EXAMPLES) used.add(`toolbar.example.${k}`)
-    for (const k of ['source', 'value', 'indicator', 'condition', 'logic', 'action', 'plot']) used.add(`kind.${k}`)
-    for (const k of ['none', 'percent', 'atr']) used.add(`stop.${k}`)
-    for (const k of ['none', 'percent', 'atr', 'rr']) used.add(`target.${k}`)
+    for (const k of ['source', 'value', 'indicator', 'condition', 'logic', 'time', 'action', 'plot']) used.add(`kind.${k}`)
+    for (const k of ['none', 'percent', 'atr']) used.add(`stop.${k}`).add(`trail.${k}`)
+    for (const k of ['none', 'percent', 'atr', 'rr']) used.add(`target.${k}`).add(`be.${k}`)
+    for (const k of ['equity', 'risk']) used.add(`size.${k}`).add(`settings.sizeHint.${k}`).add(`stats.size.${k}`)
+    for (const def of Object.values(INDICATORS)) {
+      for (const p of def.params) used.add(`param.${p.key}`)
+      // A block with one output shows no name for it.
+      if (def.outputs.length > 1) for (const o of def.outputs) used.add(`out.${o.key}`)
+    }
+    for (const tf of HTF_TIMEFRAMES) used.add(`tf.${tf}`)
+    for (const d of WEEKDAYS) used.add(`day.${d}`).add(`day.${d}.long`)
+    for (const g of MARKET_GROUPS) used.add(`market.group.${g}`)
+    for (const v of ['spot', 'futures']) used.add(`chart.source.${v}`)
+    for (const v of ['few', 'both', 'faded', 'late', 'neither']) used.add(`rob.verdict.${v}`)
+    for (const e of ['csv.empty', 'csv.columns', 'csv.few']) used.add(e)
 
     expect(used.size).toBeGreaterThan(100)
     const missing = [...used].filter((k) => !(k in en))
@@ -64,8 +79,8 @@ describe('locales', () => {
   })
 
   it('fills in the placeholders and falls back to the key', () => {
-    expect(translate('en', 'stats.trades', { n: 12 })).toBe('12 trades')
-    expect(translate('es', 'stats.trades', { n: 12 })).toBe('12 operaciones')
+    expect(translate('en', 'stats.trades', { n: 12 })).toBe('Trades: 12')
+    expect(translate('es', 'stats.trades', { n: 12 })).toBe('Operaciones: 12')
     expect(translate('es', 'no.such.key')).toBe('no.such.key')
   })
 

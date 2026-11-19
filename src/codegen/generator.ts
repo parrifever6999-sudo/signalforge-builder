@@ -3,7 +3,9 @@ import type {
   BlockData, BuilderNode, ActionKind, SourceKind, PlotStyle, PlotMeta, StrategySettings, Issue,
 } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
-import { INDICATORS, PLOT_COLORS, PLOT_STYLES, SOURCES, CONDITIONS } from '../blocks/definitions'
+import {
+  INDICATORS, PLOT_COLORS, PLOT_STYLES, SOURCES, CONDITIONS, DEFAULT_HTF, isHtf, isTimezone, paramValues,
+} from '../blocks/definitions'
 
 export interface GenResult {
   code: string
@@ -20,6 +22,10 @@ interface Val {
   type: 'num' | 'bool'
   price: boolean
 }
+
+// A block with several outputs (Bollinger: basis, upper, lower) hands one Val
+// per output; a block with one output uses the key ''.
+type Built = Map<string, Val>
 
 type AlertAction = 'buy' | 'sell' | 'closebuy' | 'closesell'
 
@@ -76,6 +82,15 @@ const positive = (n: number, fallback: number) => {
   return Number.isFinite(v) && v > 0 ? v : fallback
 }
 
+const within = (n: unknown, fallback: number, lo: number, hi: number) => {
+  const v = Number(n)
+  return Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : fallback))
+}
+
+// In the simulation a position sized by risk is capped at this many times the
+// balance, so a very tight stop cannot ask for an absurd size.
+export const MAX_LEVERAGE = 20
+
 /**
  * Turns the block graph into Pine Script v6.
  *
@@ -88,13 +103,15 @@ export function generatePine(
   title = 'My Strategy',
   settings: StrategySettings = DEFAULT_SETTINGS,
 ): GenResult {
+  const st: StrategySettings = { ...DEFAULT_SETTINGS, ...settings }
   const nodeById = new Map<string, BuilderNode>()
   nodes.forEach((n) => nodeById.set(n.id, n as BuilderNode))
 
-  const incoming = new Map<string, { handle: string | null; source: string }[]>()
+  // "out" is which output of the source block the wire leaves from.
+  const incoming = new Map<string, { handle: string | null; source: string; out: string | null }[]>()
   edges.forEach((e) => {
     if (!incoming.has(e.target)) incoming.set(e.target, [])
-    incoming.get(e.target)!.push({ handle: e.targetHandle ?? null, source: e.source })
+    incoming.get(e.target)!.push({ handle: e.targetHandle ?? null, source: e.source, out: e.sourceHandle ?? null })
   })
   // Handle "a" before "b", whatever order the edges were drawn in.
   incoming.forEach((list) => list.sort((x, y) => (x.handle ?? '').localeCompare(y.handle ?? '')))
@@ -108,21 +125,28 @@ export function generatePine(
 
   // Each block is built once. A block wired into several others is reused by
   // the expression it produced, never by a guessed variable name.
-  const memo = new Map<string, Val | null>()
+  const memo = new Map<string, Built | null>()
   const visiting = new Set<string>()
   let loop = false
 
-  function resolve(id: string): Val | null {
-    if (memo.has(id)) return memo.get(id) ?? null
-    if (visiting.has(id)) { loop = true; return null }
-    visiting.add(id)
-    const val = build(id)
-    visiting.delete(id)
-    memo.set(id, val)
-    return val
+  function resolve(id: string, out: string | null = null): Val | null {
+    if (!memo.has(id)) {
+      if (visiting.has(id)) { loop = true; return null }
+      visiting.add(id)
+      const built = build(id)
+      visiting.delete(id)
+      memo.set(id, built)
+    }
+    const built = memo.get(id)
+    if (!built) return null
+    // An output that no longer exists (the block was changed) falls back to the first one.
+    return built.get(out ?? '') ?? built.values().next().value ?? null
   }
 
-  function build(id: string): Val | null {
+  const single = (val: Val): Built => new Map([['', val]])
+  const bool = (expr: string): Built => single({ expr, type: 'bool', price: false })
+
+  function build(id: string): Built | null {
     const node = nodeById.get(id)
     const data = node?.data
     if (!data) return null
@@ -130,10 +154,10 @@ export function generatePine(
 
     switch (data.kind) {
       case 'source':
-        return sourceVal(data.source)
+        return single(sourceVal(data.source))
 
       case 'value':
-        return { expr: fmtNum(Number(data.value)), type: 'num', price: false }
+        return single({ expr: fmtNum(Number(data.value)), type: 'num', price: false })
 
       case 'indicator': {
         const def = INDICATORS[data.indicator]
@@ -143,13 +167,23 @@ export function generatePine(
         let src = sourceVal(data.source ?? def.defaultSource)
         if (def.usesSource) {
           for (const inc of ins) {
-            const up = resolve(inc.source)
+            const up = resolve(inc.source, inc.out)
             if (up?.type === 'num') { src = up; break }
             if (up?.type === 'bool') warn('warn.needsNumber')
           }
         }
-        calc.push(`${v} = ${def.build(src.expr, len)}`)
-        return { expr: v, type: 'num', price: def.scale === 'input' && def.usesSource && src.price }
+        calc.push(...def.build({
+          v, src: src.expr, len, p: paramValues(def, data.params), tf: isHtf(data.tf) ? data.tf : DEFAULT_HTF,
+        }))
+        const built: Built = new Map()
+        for (const o of def.outputs) {
+          built.set(o.key, {
+            expr: o.key ? `${v}_${o.key}` : v,
+            type: 'num',
+            price: o.scale === 'price' || (o.scale === 'input' && def.usesSource && src.price),
+          })
+        }
+        return built
       }
 
       case 'condition': {
@@ -160,12 +194,53 @@ export function generatePine(
         if (def.kind === 'logic') {
           const parts: string[] = []
           for (const inc of ins) {
-            const up = resolve(inc.source)
+            const up = resolve(inc.source, inc.out)
             if (up?.type === 'bool') parts.push(up.expr)
           }
           if (parts.length < 2) { warn('warn.logicNeedsTwo'); return null }
           calc.push(`${c} = ${parts[0]} ${def.pine} ${parts[1]}`)
-          return { expr: c, type: 'bool', price: false }
+          return bool(c)
+        }
+
+        if (def.kind === 'not') {
+          for (const inc of ins) {
+            const up = resolve(inc.source, inc.out)
+            if (up?.type !== 'bool') continue
+            calc.push(`${c} = not ${up.expr}`)
+            return bool(c)
+          }
+          warn('warn.notNeedsOne')
+          return null
+        }
+
+        if (def.kind === 'session') {
+          const from = Math.round(within(data.from, 8, 0, 23))
+          const to = Math.round(within(data.to, 17, 1, 24))
+          const tz = isTimezone(data.tz) ? data.tz : 'UTC'
+          if (from === to % 24) {
+            calc.push(`${c} = true`) // from an hour to the same hour: the whole day
+          } else {
+            calc.push(
+              `${c}_h = hour(time, "${tz}")`,
+              // "to" earlier than "from" is a session that runs past midnight
+              from < to ? `${c} = ${c}_h >= ${from} and ${c}_h < ${to}` : `${c} = ${c}_h >= ${from} or ${c}_h < ${to}`,
+            )
+          }
+          return bool(c)
+        }
+
+        if (def.kind === 'weekdays') {
+          const days = [...new Set(String(data.days ?? '23456').replace(/[^1-7]/g, ''))].sort()
+          const tz = isTimezone(data.tz) ? data.tz : 'UTC'
+          if (days.length === 0 || days.length === 7) {
+            calc.push(`${c} = ${days.length === 7}`)
+          } else {
+            calc.push(
+              `${c}_d = dayofweek(time, "${tz}")`,
+              `${c} = ${days.map((d) => `${c}_d == ${d}`).join(' or ')}`,
+            )
+          }
+          return bool(c)
         }
 
         let a = sourcePine(data.sourceA)
@@ -173,15 +248,21 @@ export function generatePine(
         let gotA = false
         let gotB = false
         for (const inc of ins) {
-          const up = resolve(inc.source)
+          const up = resolve(inc.source, inc.out)
           if (!up) continue
           if (up.type !== 'num') { warn('warn.needsNumber'); continue }
           if (inc.handle === 'b' && !gotB) { b = up.expr; gotB = true }
           else if (inc.handle !== 'b' && !gotA) { a = up.expr; gotA = true }
           else if (!gotB) { b = up.expr; gotB = true }
         }
-        calc.push(def.kind === 'cross' ? `${c} = ${def.pine}(${a}, ${b})` : `${c} = ${a} ${def.pine} ${b}`)
-        return { expr: c, type: 'bool', price: false }
+
+        if (def.kind === 'trend') {
+          const bars = Math.round(within(data.length, 3, 1, 500))
+          calc.push(`${c} = ${def.pine}(${a}, ${bars})`)
+        } else {
+          calc.push(def.kind === 'cross' ? `${c} = ${def.pine}(${a}, ${b})` : `${c} = ${a} ${def.pine} ${b}`)
+        }
+        return bool(c)
       }
 
       default:
@@ -196,7 +277,7 @@ export function generatePine(
     if (data?.kind !== 'action') continue
     let cond: string | null = null
     for (const inc of incoming.get(n.id) ?? []) {
-      const up = resolve(inc.source)
+      const up = resolve(inc.source, inc.out)
       if (up?.type === 'bool') { cond = up.expr; break }
     }
     if (!cond) { warn('warn.actionNeedsCondition'); continue }
@@ -210,7 +291,7 @@ export function generatePine(
     if (data?.kind !== 'plot') continue
     let val: Val | null = null
     for (const inc of incoming.get(n.id) ?? []) {
-      val = resolve(inc.source)
+      val = resolve(inc.source, inc.out)
       if (val) break
     }
     const expr = !val ? 'close' : val.type === 'bool' ? `(${val.expr} ? 1 : 0)` : val.expr
@@ -252,54 +333,89 @@ export function generatePine(
   }
 
   const slug = strategySlug(title)
-  const symbol = cleanSymbol(settings.symbol)
+  const symbol = cleanSymbol(st.symbol)
   const hasLong = actions.some((a) => a.action === 'entry_long')
   const hasShort = actions.some((a) => a.action === 'entry_short')
+  const hasEntry = hasLong || hasShort
 
-  const stopKind = settings.stopKind
-  let targetKind = settings.targetKind
+  // Settings that lean on a stop are dropped, with a warning, when there is none.
+  const stopKind = st.stopKind
+  let targetKind = st.targetKind
   if (targetKind === 'rr' && stopKind === 'none') { warn('warn.rrNeedsStop'); targetKind = 'none' }
-  const useStop = stopKind !== 'none' && (hasLong || hasShort)
-  const useTarget = targetKind !== 'none' && (hasLong || hasShort)
-  const stopVal = fmtNum(positive(settings.stopValue, 1.5))
-  const targetVal = fmtNum(positive(settings.targetValue, 2))
-  const stopExpr = stopKind === 'percent' ? `close * ${stopVal} / 100` : `sfAtr * ${stopVal}`
-  const targetExpr =
-    targetKind === 'percent' ? `close * ${targetVal} / 100`
-    : targetKind === 'atr' ? `sfAtr * ${targetVal}`
-    : `sfStopDist * ${targetVal}`
+  let beKind = st.beKind
+  if (beKind === 'rr' && stopKind === 'none') { warn('warn.beNeedsStop'); beKind = 'none' }
+  let sizeKind = st.sizeKind
+  if (sizeKind === 'risk' && stopKind === 'none') { warn('warn.riskNeedsStop'); sizeKind = 'equity' }
+  const trailKind = st.trailKind
+
+  const useStop = stopKind !== 'none' && hasEntry
+  const useTarget = targetKind !== 'none' && hasEntry
+  const useTrail = trailKind !== 'none' && hasEntry
+  const useBe = beKind !== 'none' && hasEntry
+  const moving = useTrail || useBe // the stop changes while the trade is open
+  const byRisk = sizeKind === 'risk' && hasEntry
+  const maxBars = hasEntry ? Math.round(within(st.maxBars, 0, 0, 10000)) : 0
+
+  const stopVal = fmtNum(positive(st.stopValue, 1.5))
+  const targetVal = fmtNum(positive(st.targetValue, 2))
+  const trailVal = fmtNum(positive(st.trailValue, 2))
+  const beVal = fmtNum(positive(st.beValue, 1))
+  const dist = (kind: string, val: string) => (kind === 'percent' ? `close * ${val} / 100` : `sfAtr * ${val}`)
+  const stopExpr = dist(stopKind, stopVal)
+  const targetExpr = targetKind === 'rr' ? `sfStopDist * ${targetVal}` : dist(targetKind, targetVal)
+  const trailExpr = dist(trailKind, trailVal)
+  const beExpr = beKind === 'rr' ? `sfStopDist * ${beVal}` : dist(beKind, beVal)
+  const useAtr =
+    (useStop && stopKind === 'atr') || (useTarget && targetKind === 'atr') ||
+    (useTrail && trailKind === 'atr') || (useBe && beKind === 'atr')
+
+  const fee = within(st.feePct, DEFAULT_SETTINGS.feePct, 0, 5)
+  const slip = within(st.slipPct, DEFAULT_SETTINGS.slipPct, 0, 5)
+  const equityPct = sizeKind === 'equity' && st.sizeKind === 'equity' ? within(positive(st.sizeValue, 100), 100, 1, 500) : 100
+  const riskPct = fmtNum(within(positive(st.sizeValue, 1), 1, 0.01, 100))
 
   out.push(
     `strategy("${escTitle(title)}", overlay=${overlay}, initial_capital=10000, ` +
-    'default_qty_type=strategy.percent_of_equity, default_qty_value=100, ' +
+    `default_qty_type=strategy.percent_of_equity, default_qty_value=${fmtNum(equityPct)}, ` +
     // margin 0 = no simulated margin calls. With Pine v6 defaults (100) a
     // short sized at the whole balance is cut in pieces on any adverse tick.
-    'commission_type=strategy.commission.percent, commission_value=0.05, margin_long=0, margin_short=0)',
+    `commission_type=strategy.commission.percent, commission_value=${fmtNum(fee + slip)}, margin_long=0, margin_short=0)`,
+    `// Cost per side: ${fmtNum(fee)}% commission + ${fmtNum(slip)}% slippage, charged together so it weighs the same on any symbol`,
     '',
     '// Lot size sent to MT5 with every entry (SignalForge reads it from the alert)',
-    `lotSize = input.float(${fmtNum(Math.max(0.01, positive(settings.lot, 0.1)))}, "Lot size (MT5)", minval=0.01, step=0.01)`,
+    `lotSize = input.float(${fmtNum(Math.max(0.01, positive(st.lot, 0.1)))}, "Lot size (MT5)", minval=0.01, step=0.01)`,
     '',
     ...calc,
   )
 
-  if (useStop || useTarget) {
-    out.push('', '// Stop and target distances, fixed on the entry bar')
-    if ((useStop && stopKind === 'atr') || (useTarget && targetKind === 'atr')) out.push('sfAtr = ta.atr(14)')
+  if (useStop || useTarget || moving) {
+    out.push('', '// Distances of the stop, the target and the trailing, fixed on the entry bar')
+    if (useAtr) out.push('sfAtr = ta.atr(14)')
     if (useStop) out.push('var float sfStopDist = na')
     if (useTarget) out.push('var float sfTakeDist = na')
+    if (useTrail) out.push('var float sfTrailDist = na')
+    if (useBe) out.push('var float sfBeDist = na')
+    if (moving) out.push('var float sfStop = na')
   }
 
   out.push('', '// One position at a time: entries only fire when flat, so TradingView and MT5 stay in sync')
+  // Sized by risk: what is lost if the stop is hit is a fixed share of the
+  // balance. The lot that goes to MT5 is still lotSize.
+  const qty = byRisk
+    ? `, qty=math.min(strategy.equity * ${riskPct} / 100 / sfStopDist, strategy.equity * ${MAX_LEVERAGE} / close)`
+    : ''
   for (const a of actions) {
     if (a.action === 'entry_long' || a.action === 'entry_short') {
       const long = a.action === 'entry_long'
-      out.push(`if ${a.cond} and strategy.position_size == 0`)
+      out.push(`if ${a.cond} and strategy.position_size == 0${byRisk ? ` and ${stopExpr} > 0` : ''}`)
       if (useStop) out.push(`    sfStopDist := ${stopExpr}`)
       if (useTarget) out.push(`    sfTakeDist := ${targetExpr}`)
+      if (useTrail) out.push(`    sfTrailDist := ${trailExpr}`)
+      if (useBe) out.push(`    sfBeDist := ${beExpr}`)
       out.push(
         long
-          ? `    strategy.entry("Long", strategy.long, alert_message=${alertJson('buy', symbol, slug)})`
-          : `    strategy.entry("Short", strategy.short, alert_message=${alertJson('sell', symbol, slug)})`,
+          ? `    strategy.entry("Long", strategy.long${qty}, alert_message=${alertJson('buy', symbol, slug)})`
+          : `    strategy.entry("Short", strategy.short${qty}, alert_message=${alertJson('sell', symbol, slug)})`,
       )
     } else if (a.action === 'exit_long') {
       out.push(
@@ -314,24 +430,63 @@ export function generatePine(
     }
   }
 
-  if (useStop || useTarget) {
-    const bracket = (long: boolean) => {
-      const parts: string[] = []
-      if (useStop) parts.push(`stop=strategy.position_avg_price ${long ? '-' : '+'} sfStopDist`)
-      if (useTarget) parts.push(`limit=strategy.position_avg_price ${long ? '+' : '-'} sfTakeDist`)
-      return parts.join(', ')
+  const avg = 'strategy.position_avg_price'
+  const exitCall = (long: boolean, stop: string) =>
+    `    strategy.exit("${long ? 'XL' : 'XS'}", from_entry="${long ? 'Long' : 'Short'}", ` +
+    [stop, useTarget ? `limit=${avg} ${long ? '+' : '-'} sfTakeDist` : ''].filter(Boolean).join(', ') +
+    `, alert_message=${alertJson(long ? 'closebuy' : 'closesell', symbol, slug)})`
+
+  if (moving) {
+    // The stop lives in sfStop: it starts at the fixed stop (if any), jumps to
+    // the entry price at break-even and follows the best price when trailing.
+    // It only ever moves in favour of the trade.
+    const side = (long: boolean): string[] => {
+      const lines: string[] = []
+      if (useStop) lines.push('    if na(sfStop)', `        sfStop := ${avg} ${long ? '-' : '+'} sfStopDist`)
+      if (useBe) {
+        lines.push(
+          long ? `    if high >= ${avg} + sfBeDist` : `    if low <= ${avg} - sfBeDist`,
+          `        sfStop := math.${long ? 'max' : 'min'}(nz(sfStop, ${avg}), ${avg})`,
+        )
+      }
+      if (useTrail) {
+        const level = long ? 'high - sfTrailDist' : 'low + sfTrailDist'
+        lines.push(`    sfStop := math.${long ? 'max' : 'min'}(nz(sfStop, ${level}), ${level})`)
+      }
+      lines.push(exitCall(long, 'stop=sfStop'))
+      return lines
     }
     out.push('', '// Protective exits: TradingView sends the close alert when the stop or the target is hit')
+    if (hasLong) out.push('if strategy.position_size > 0', ...side(true))
+    if (hasShort) out.push(`${hasLong ? 'else if' : 'if'} strategy.position_size < 0`, ...side(false))
+    out.push('else', '    sfStop := na')
+  } else if (useStop || useTarget) {
+    out.push('', '// Protective exits: TradingView sends the close alert when the stop or the target is hit')
+    if (hasLong) {
+      out.push('if strategy.position_size > 0', exitCall(true, useStop ? `stop=${avg} - sfStopDist` : ''))
+    }
+    if (hasShort) {
+      out.push('if strategy.position_size < 0', exitCall(false, useStop ? `stop=${avg} + sfStopDist` : ''))
+    }
+  }
+
+  if (maxBars > 0) {
+    out.push(
+      '',
+      `// Time exit: a trade still open after ${maxBars} bars is closed`,
+      'var int sfBars = 0',
+      'sfBars := strategy.position_size != 0 ? sfBars + 1 : 0',
+    )
     if (hasLong) {
       out.push(
-        'if strategy.position_size > 0',
-        `    strategy.exit("XL", from_entry="Long", ${bracket(true)}, alert_message=${alertJson('closebuy', symbol, slug)})`,
+        `if strategy.position_size > 0 and sfBars >= ${maxBars}`,
+        `    strategy.close("Long", alert_message=${alertJson('closebuy', symbol, slug)})`,
       )
     }
     if (hasShort) {
       out.push(
-        'if strategy.position_size < 0',
-        `    strategy.exit("XS", from_entry="Short", ${bracket(false)}, alert_message=${alertJson('closesell', symbol, slug)})`,
+        `if strategy.position_size < 0 and sfBars >= ${maxBars}`,
+        `    strategy.close("Short", alert_message=${alertJson('closesell', symbol, slug)})`,
       )
     }
   }

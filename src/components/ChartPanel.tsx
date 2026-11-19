@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useBuilder } from '../store/builderStore'
 import { useT } from '../i18n'
 import { localeOf } from '../lang'
-import { MARKETS } from '../data/market'
+import { marketOf } from '../data/market'
+import { timeframeLabel } from '../data/csv'
+import { holdoutCut } from '../engine/robustness'
 import type { Candle, PlotResult, SignalMarker } from '../types'
 
-const STEP = 6 // pixels per candle
+const STEPS = [1, 2, 3, 4, 6, 9, 12] // pixels per candle, from far to close
+const DEFAULT_STEP = 4
 const PAD_RIGHT = 62 // room for the price labels
 const PAD_BOTTOM = 18 // room for the dates
 const UP = '#3fb68b'
@@ -14,17 +17,21 @@ const NO_PLOTS: PlotResult[] = []
 const NO_MARKERS: SignalMarker[] = []
 
 // Candles, the lines of each plot and the buy/sell markers, drawn on a canvas.
-// Drag to move back in time; double click returns to the latest candle.
+// Drag or use the slider to move in time, zoom with the wheel or the buttons;
+// double click returns to the latest candle.
 export function ChartPanel() {
   const t = useT()
   const lang = useBuilder((s) => s.lang)
   const candles = useBuilder((s) => s.candles)
+  const candlesTf = useBuilder((s) => s.candlesTf)
   const runResult = useBuilder((s) => s.runResult)
   const runFor = useBuilder((s) => s.runFor)
   const dataState = useBuilder((s) => s.dataState)
   const dataError = useBuilder((s) => s.dataError)
   const market = useBuilder((s) => s.market)
   const timeframe = useBuilder((s) => s.timeframe)
+  const custom = useBuilder((s) => s.custom)
+  const holdout = useBuilder((s) => s.holdout)
   const loadCandles = useBuilder((s) => s.loadCandles)
 
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -32,6 +39,8 @@ export function ChartPanel() {
   const drag = useRef<{ x: number; offset: number } | null>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [offset, setOffset] = useState(0) // candles hidden to the right of the view
+  const [zoom, setZoom] = useState(STEPS.indexOf(DEFAULT_STEP))
+  const step = STEPS[zoom]
 
   useEffect(() => {
     const el = wrapRef.current
@@ -43,36 +52,53 @@ export function ChartPanel() {
 
   useEffect(() => setOffset(0), [candles])
 
+  // The wheel zooms. Registered by hand because the page must not scroll with it.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      setZoom((z) => Math.min(STEPS.length - 1, Math.max(0, z + (e.deltaY < 0 ? 1 : -1))))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   // Results of an older set of candles must not be drawn over a newer one.
   const fits = runResult?.ok && runFor === candles
   const plots = fits ? runResult.plots : NO_PLOTS
-  const markers = fits ? runResult.markers : NO_MARKERS
+  const allMarkers = fits ? runResult.markers : NO_MARKERS
+  // With the last part held back, its trades stay out of sight.
+  const cut = holdout ? holdoutCut(candles.length) : candles.length
+  const markers = holdout ? allMarkers.filter((m) => m.index < cut) : allMarkers
 
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx || size.w === 0 || size.h === 0) return
-    draw(ctx, canvas, size.w, size.h, candles, plots, markers, offset, localeOf(lang), timeframe)
-  }, [candles, plots, markers, offset, size, lang, timeframe])
+    draw(ctx, canvas, size.w, size.h, candles, plots, markers, offset, step, cut, localeOf(lang), candlesTf)
+  }, [candles, plots, markers, offset, step, cut, size, lang, candlesTf])
 
-  const visible = Math.max(1, Math.floor((size.w - PAD_RIGHT) / STEP))
+  const visible = Math.max(1, Math.floor((size.w - PAD_RIGHT) / step))
   const maxOffset = Math.max(0, candles.length - visible)
+  const shownOffset = Math.min(offset, maxOffset)
 
   const onPointerDown = (e: React.PointerEvent) => {
-    drag.current = { x: e.clientX, offset }
+    drag.current = { x: e.clientX, offset: shownOffset }
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
   }
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag.current) return
-    const moved = Math.round((e.clientX - drag.current.x) / STEP)
+    const moved = Math.round((e.clientX - drag.current.x) / step)
     setOffset(Math.min(maxOffset, Math.max(0, drag.current.offset + moved)))
   }
   const onPointerUp = () => { drag.current = null }
 
-  const marketLabel = MARKETS.find((m) => m.key === market)?.label ?? market
+  const found = marketOf(market)
   const heading =
     dataState === 'loading' ? t('chart.loading')
-    : dataState === 'live' ? t('chart.title', { market: marketLabel, tf: timeframe, bars: candles.length })
+    : dataState === 'live' ? t('chart.title', { market: found?.label ?? market, tf: timeframe, bars: candles.length })
+    : dataState === 'custom' ? t('chart.title', { market: custom?.name ?? 'CSV', tf: timeframeLabel(candlesTf), bars: candles.length })
     : t('chart.sample', { bars: candles.length })
 
   const buys = markers.filter((m) => m.side === 'buy').length
@@ -94,6 +120,10 @@ export function ChartPanel() {
               <span className="legend-item"><i className="tri sell" /> {t('chart.sells', { n: sells })}</span>
             </>
           )}
+          <span className="zoom">
+            <button type="button" onClick={() => setZoom((z) => Math.max(0, z - 1))} disabled={zoom === 0} aria-label={t('chart.zoomOut')} title={t('chart.zoomOut')}>-</button>
+            <button type="button" onClick={() => setZoom((z) => Math.min(STEPS.length - 1, z + 1))} disabled={zoom === STEPS.length - 1} aria-label={t('chart.zoomIn')} title={t('chart.zoomIn')}>+</button>
+          </span>
         </div>
       </div>
 
@@ -113,7 +143,15 @@ export function ChartPanel() {
         <canvas ref={canvasRef} />
       </div>
 
-      {dataState === 'live' && <p className="fine">{t('chart.source')}</p>}
+      {maxOffset > 0 && (
+        <input
+          className="scrub" type="range" min={0} max={maxOffset} step={1} aria-label={t('chart.scrub')}
+          value={maxOffset - shownOffset} onChange={(e) => setOffset(maxOffset - Number(e.target.value))}
+        />
+      )}
+
+      {dataState === 'live' && <p className="fine">{t(`chart.source.${found?.venue ?? 'spot'}`)}</p>}
+      {dataState === 'custom' && <p className="fine">{t('chart.source.custom')}</p>}
     </section>
   )
 }
@@ -145,6 +183,8 @@ function draw(
   plots: PlotResult[],
   markers: SignalMarker[],
   offset: number,
+  step: number,
+  cut: number, // first candle of the held-back part (= candles.length when nothing is held back)
   locale: string,
   timeframe: string,
 ) {
@@ -158,10 +198,10 @@ function draw(
   if (candles.length === 0) return
 
   const plotW = W - PAD_RIGHT
-  const visible = Math.max(1, Math.floor(plotW / STEP))
-  const end = Math.max(1, candles.length - offset)
+  const visible = Math.max(1, Math.floor(plotW / step))
+  const end = Math.max(1, candles.length - Math.min(offset, Math.max(0, candles.length - visible)))
   const start = Math.max(0, end - visible)
-  const x = (i: number) => (i - start) * STEP + STEP / 2
+  const x = (i: number) => (i - start) * step + step / 2
 
   const pricePlots = plots.filter((p) => p.pane === 'price')
   const subPlots = plots.filter((p) => p.pane === 'sub')
@@ -182,7 +222,7 @@ function draw(
 
   grid(ctx, W, plotW, pMin, pMax, y, 4)
 
-  const body = Math.max(1, STEP - 2)
+  const body = Math.max(1, step - 2)
   for (let i = start; i < end; i++) {
     const c = candles[i]
     const color = c.close >= c.open ? UP : DOWN
@@ -192,14 +232,16 @@ function draw(
     ctx.moveTo(Math.round(x(i)) + 0.5, y(c.high))
     ctx.lineTo(Math.round(x(i)) + 0.5, y(c.low))
     ctx.stroke()
-    const yo = y(c.open)
-    const yc = y(c.close)
-    ctx.fillRect(x(i) - body / 2, Math.min(yo, yc), body, Math.max(1, Math.abs(yc - yo)))
+    if (step > 2) {
+      const yo = y(c.open)
+      const yc = y(c.close)
+      ctx.fillRect(x(i) - body / 2, Math.min(yo, yc), body, Math.max(1, Math.abs(yc - yo)))
+    }
   }
 
-  for (const p of pricePlots) series(ctx, p, start, end, x, y, y(pMin))
+  for (const p of pricePlots) series(ctx, p, start, end, step, x, y, y(pMin))
 
-  const tri = 4
+  const tri = step > 2 ? 4 : 3
   for (const m of markers) {
     if (m.index < start || m.index >= end) continue
     const c = candles[m.index]
@@ -239,14 +281,26 @@ function draw(
     ctx.stroke()
     grid(ctx, W, plotW, sMin, sMax, ys, 2)
     const zero = sMin <= 0 && sMax >= 0 ? ys(0) : ys(sMin)
-    for (const p of subPlots) series(ctx, p, start, end, x, ys, zero)
+    for (const p of subPlots) series(ctx, p, start, end, step, x, ys, zero)
+  }
+
+  // ---- The part held back for the out-of-sample test ----
+  if (cut < end) {
+    const from = Math.max(0, (Math.max(cut, start) - start) * step)
+    ctx.fillStyle = 'rgba(8, 9, 10, 0.72)'
+    ctx.fillRect(from, 0, plotW - from, fullH)
+    ctx.strokeStyle = '#f5b942'
+    ctx.beginPath()
+    ctx.moveTo(Math.round(from) + 0.5, 0)
+    ctx.lineTo(Math.round(from) + 0.5, fullH)
+    ctx.stroke()
   }
 
   // ---- Dates ----
-  const intraday = timeframe !== '1d'
+  const intraday = !['D', 'W', 'M'].includes(timeframe)
   const fmt = new Intl.DateTimeFormat(locale, intraday
-    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
-    : { year: '2-digit', month: 'short', day: 'numeric' })
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }
+    : { year: '2-digit', month: 'short', day: 'numeric', timeZone: 'UTC' })
   ctx.fillStyle = '#8a8f87'
   ctx.textAlign = 'center'
   const ticks = Math.max(2, Math.min(5, Math.floor(plotW / 150)))
@@ -286,6 +340,7 @@ function series(
   p: PlotResult,
   start: number,
   end: number,
+  step: number,
   x: (i: number) => number,
   y: (v: number) => number,
   baseline: number,
@@ -294,7 +349,7 @@ function series(
   ctx.fillStyle = p.color
 
   if (p.style === 'histogram' || p.style === 'columns') {
-    const w = p.style === 'columns' ? Math.max(1, STEP - 2) : 1
+    const w = p.style === 'columns' ? Math.max(1, step - 2) : 1
     for (let i = start; i < end; i++) {
       const v = p.data[i]
       if (!Number.isFinite(v)) continue
@@ -309,7 +364,7 @@ function series(
       const v = p.data[i]
       if (!Number.isFinite(v)) continue
       ctx.beginPath()
-      ctx.arc(x(i), y(v), 1.6, 0, Math.PI * 2)
+      ctx.arc(x(i), y(v), Math.min(1.6, Math.max(0.8, step / 3)), 0, Math.PI * 2)
       ctx.fill()
     }
     return

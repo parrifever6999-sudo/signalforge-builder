@@ -1,19 +1,74 @@
 import type { Edge } from '@xyflow/react'
-import type { BlockData, BuilderNode, StrategySettings } from '../types'
+import type { BlockData, BuilderNode, Candle, PlotMeta, RunResult, StrategySettings } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
+import { cleanData } from '../store/graphIO'
+import { generateCandles } from '../data/sampleData'
+import { runPine } from '../engine/pineRunner'
 
-// Helpers shared by the generator tests.
+// Helpers shared by the tests.
 
 export function node(id: string, data: BlockData): BuilderNode {
   return { id, type: 'block', position: { x: 0, y: 0 }, data } as BuilderNode
 }
 
-export function edge(source: string, target: string, targetHandle?: string): Edge {
-  return { id: `${source}-${target}-${targetHandle ?? ''}`, source, target, targetHandle }
+// "out" names the output the wire leaves from, on blocks that have several.
+export function edge(source: string, target: string, targetHandle?: string | null, out?: string | null): Edge {
+  return {
+    id: `${source}${out ? `.${out}` : ''}-${target}-${targetHandle ?? ''}`,
+    source, target, targetHandle, sourceHandle: out ?? null,
+  }
 }
+
+// A block of any kind with the defaults the app gives it.
+export function block(id: string, raw: Record<string, unknown>): BuilderNode {
+  const data = cleanData(raw)
+  if (!data) throw new Error(`not a block: ${JSON.stringify(raw)}`)
+  return node(id, data)
+}
+
+export const ind = (id: string, indicator: string, more: Record<string, unknown> = {}) =>
+  block(id, { kind: 'indicator', indicator, ...more })
+export const cond = (id: string, condition: string, more: Record<string, unknown> = {}) =>
+  block(id, { kind: 'condition', condition, ...more })
+export const act = (id: string, action: string) => block(id, { kind: 'action', action })
+export const plot = (id: string, title = 'P') => block(id, { kind: 'plot', title, color: '#2563eb', style: 'line' })
 
 export function settings(over: Partial<StrategySettings> = {}): StrategySettings {
   return { ...DEFAULT_SETTINGS, ...over }
+}
+
+const HOUR = 3600000
+
+// The sample series on an hourly clock, for what depends on the time of day or
+// on a higher timeframe. It starts on Friday 2024-03-01, and 600 hours later
+// the US clocks have changed (10 March), so time zones are really exercised.
+export function hourlyCandles(count = 600, start = Date.UTC(2024, 2, 1), seed = 42): Candle[] {
+  return generateCandles(count, seed).map((c, i) => ({
+    ...c, openTime: start + i * HOUR, closeTime: start + (i + 1) * HOUR - 1,
+  }))
+}
+
+// Runs a script and also reads the series of the expressions given, by name.
+export async function runWith(
+  code: string, candles: Candle[], series: Record<string, string>, timeframe = '60',
+): Promise<{ result: RunResult; get: (name: string) => number[] }> {
+  const names = Object.keys(series)
+  const extra = names.map((name) => `plot(${series[name]}, "${name}")`).join('\n')
+  const meta: PlotMeta[] = names.map((title) => ({ title, color: '#2563eb', style: 'line', pane: 'sub' }))
+  const result = await runPine(`${code}${extra}\n`, candles, meta, { timeframe })
+  return { result, get: (name) => result.plots[names.indexOf(name)]?.data ?? [] }
+}
+
+// Stretches of consecutive bars where a series has a value (one per open trade).
+export function runs(series: number[]): number[][] {
+  const out: number[][] = []
+  let cur: number[] = []
+  for (const v of series) {
+    if (Number.isFinite(v)) cur.push(v)
+    else if (cur.length) { out.push(cur); cur = [] }
+  }
+  if (cur.length) out.push(cur)
+  return out
 }
 
 // The graph the app loads as its example: one price block feeding two EMAs.
@@ -35,6 +90,21 @@ export function emaCrossGraph() {
     edge('n4', 'n6'), edge('n5', 'n7'),
     edge('n2', 'n8'),
   ]
+  return { nodes, edges }
+}
+
+// Fast EMA against slow EMA with nothing that closes a trade: whatever closes
+// it is the trade management under test. "side" picks longs, shorts or both.
+export function entriesOnly(side: 'long' | 'short' | 'both' = 'long') {
+  const nodes = [
+    ind('f', 'ema', { length: 9 }),
+    ind('s', 'ema', { length: 21 }),
+    cond('up', 'crossover'),
+    cond('dn', 'crossunder'),
+  ]
+  const edges = [edge('f', 'up', 'a'), edge('s', 'up', 'b'), edge('f', 'dn', 'a'), edge('s', 'dn', 'b')]
+  if (side !== 'short') { nodes.push(act('buy', 'entry_long')); edges.push(edge('up', 'buy')) }
+  if (side !== 'long') { nodes.push(act('sell', 'entry_short')); edges.push(edge('dn', 'sell')) }
   return { nodes, edges }
 }
 
@@ -65,11 +135,14 @@ export function undeclared(code: string): string[] {
   const missing: string[] = []
   for (const line of code.split('\n')) {
     const m = /^\s*(?:var\s+\w+\s+)?([vc]_\w+)\s*:?=/.exec(line)
-    const body = m ? line.slice(line.indexOf('=') + 1) : line
+    // [a, b, c] = ta.bb(...) declares the three at once
+    const tuple = /^\s*\[([^\]]+)\]\s*=/.exec(line)
+    const body = m || tuple ? line.slice(line.indexOf('=') + 1) : line
     for (const ref of body.match(/\b[vc]_\w+\b/g) ?? []) {
       if (!declared.has(ref)) missing.push(ref)
     }
     if (m) declared.add(m[1])
+    if (tuple) for (const name of tuple[1].split(',')) declared.add(name.trim())
   }
   return missing
 }

@@ -1,30 +1,38 @@
 import { create } from 'zustand'
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react'
 import type { Edge, Connection, NodeChange, EdgeChange, ReactFlowInstance } from '@xyflow/react'
-import type {
-  BlockData, BlockType, BuilderNode, Candle, RunResult, StrategySettings,
-  IndicatorKind, ConditionKind, ActionKind,
-} from '../types'
+import type { BlockData, BlockType, BuilderNode, Candle, RunResult, StrategySettings } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
-import { ACTIONS, CONDITIONS, INDICATORS, PLOT_COLORS } from '../blocks/definitions'
+import { PLOT_COLORS } from '../blocks/definitions'
 import type { GenResult } from '../codegen/generator'
 import { runPine } from '../engine/pineRunner'
 import { generateCandles } from '../data/sampleData'
-import { fetchCandles, SAMPLE_MARKET } from '../data/market'
+import {
+  fetchCandles, pineTimeframe, isDepth, isTimeframe, CUSTOM_MARKET, DEFAULT_DEPTH, SAMPLE_MARKET,
+} from '../data/market'
 import type { Timeframe } from '../data/market'
-import { isTimeframe } from '../data/market'
+import { parseCsv } from '../data/csv'
+import type { CsvError } from '../data/csv'
 import type { Lang } from '../lang'
-import { canConnect, connectEdge } from './connect'
-import { cleanSettings } from './graphIO'
+import { canConnect, connectEdge, pruneEdges } from './connect'
+import { cleanData, cleanSettings } from './graphIO'
 import type { SavedState } from './graphIO'
 import { example } from './examples'
 import type { ExampleKey } from './examples'
 
 // 'live' = real candles, 'sample' = the user chose the offline series,
-// 'fallback' = real candles failed and the offline series stands in.
-export type DataState = 'loading' | 'live' | 'sample' | 'fallback'
+// 'fallback' = real candles failed and the offline series stands in,
+// 'custom' = candles from a file the user loaded.
+export type DataState = 'loading' | 'live' | 'sample' | 'fallback' | 'custom'
 
 export type FlowInstance = ReactFlowInstance<BuilderNode, Edge>
+
+// A price history the user loaded from a file. It lives in memory only.
+export interface CustomData {
+  name: string
+  candles: Candle[]
+  timeframe: string // as Pine names it
+}
 
 interface BuilderState {
   nodes: BuilderNode[]
@@ -33,15 +41,21 @@ interface BuilderState {
   settings: StrategySettings
   market: string
   timeframe: Timeframe
+  depth: number
   lang: Lang
 
   candles: Candle[]
+  candlesTf: string // timeframe of the loaded candles, as Pine names it
   dataState: DataState
   dataError: string | null
+  custom: CustomData | null
 
   runResult: RunResult | null
   runFor: Candle[] | null // the candles runResult was computed on
   isRunning: boolean
+  // Out-of-sample test: while on, the last part of the history is kept out of
+  // sight so the strategy is not tuned to it.
+  holdout: boolean
 
   instance: FlowInstance | null
   setInstance: (i: FlowInstance | null) => void
@@ -57,7 +71,10 @@ interface BuilderState {
   setSettings: (patch: Partial<StrategySettings>) => void
   setMarket: (m: string) => void
   setTimeframe: (tf: Timeframe) => void
+  setDepth: (n: number) => void
   setLang: (l: Lang) => void
+  setHoldout: (on: boolean) => void
+  importCsv: (name: string, text: string) => CsvError | null
 
   loadCandles: () => Promise<void>
   run: (gen: GenResult) => Promise<void>
@@ -69,26 +86,21 @@ interface BuilderState {
 }
 
 const SAMPLE_BARS = 600
+const SAMPLE_TF = 'D'
 
+// A new block with the defaults of its kind (cleanData fills them in).
 function blockData(key: string, type: BlockType, plotCount: number): BlockData | null {
   switch (type) {
     case 'source':
       return { kind: 'source', source: 'close' }
     case 'value':
       return { kind: 'value', value: 50 }
-    case 'indicator': {
-      const kind = (key in INDICATORS ? key : 'ema') as IndicatorKind
-      const def = INDICATORS[kind]
-      return { kind: 'indicator', indicator: kind, length: def.defaultLength, source: def.defaultSource }
-    }
-    case 'condition': {
-      const kind = (key in CONDITIONS ? key : 'crossover') as ConditionKind
-      return { kind: 'condition', condition: kind, sourceA: 'close', sourceB: 'close' }
-    }
-    case 'action': {
-      const kind = (ACTIONS.includes(key as ActionKind) ? key : 'entry_long') as ActionKind
-      return { kind: 'action', action: kind }
-    }
+    case 'indicator':
+      return cleanData({ kind: 'indicator', indicator: key }) ?? cleanData({ kind: 'indicator', indicator: 'ema' })
+    case 'condition':
+      return cleanData({ kind: 'condition', condition: key }) ?? cleanData({ kind: 'condition', condition: 'crossover' })
+    case 'action':
+      return cleanData({ kind: 'action', action: key }) ?? { kind: 'action', action: 'entry_long' }
     case 'plot':
       return { kind: 'plot', title: 'Line', color: PLOT_COLORS[plotCount % PLOT_COLORS.length].key, style: 'line' }
     default:
@@ -107,15 +119,19 @@ export const useBuilder = create<BuilderState>((set, get) => ({
   settings: { ...DEFAULT_SETTINGS },
   market: 'BTCUSDT',
   timeframe: '1h',
+  depth: DEFAULT_DEPTH,
   lang: 'en',
 
   candles: [],
+  candlesTf: SAMPLE_TF,
   dataState: 'loading',
   dataError: null,
+  custom: null,
 
   runResult: null,
   runFor: null,
   isRunning: false,
+  holdout: false,
 
   instance: null,
   setInstance: (i) => set({ instance: i }),
@@ -127,9 +143,20 @@ export const useBuilder = create<BuilderState>((set, get) => ({
     set((s) => (canConnect(s.nodes, s.edges, connection) ? { edges: connectEdge(s.edges, connection) } : s)),
 
   updateNodeData: (id, patch) =>
-    set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } as BlockData } : n)),
-    })),
+    set((s) => {
+      // Picking another indicator or condition starts from that block's own
+      // defaults, and the wires that no longer fit it are dropped.
+      const swapped = 'indicator' in patch || 'condition' in patch
+      const nodes = s.nodes.map((n) => {
+        if (n.id !== id) return n
+        const merged = { ...n.data, ...patch }
+        const data = swapped
+          ? cleanData('indicator' in patch ? { kind: 'indicator', indicator: patch.indicator } : merged)
+          : (merged as BlockData)
+        return data ? { ...n, data } : n
+      })
+      return swapped ? { nodes, edges: pruneEdges(nodes, s.edges) } : { nodes }
+    }),
 
   addBlock: (key, type, position) => {
     const { nodes, instance } = get()
@@ -162,27 +189,50 @@ export const useBuilder = create<BuilderState>((set, get) => ({
     set({ timeframe: tf })
     void get().loadCandles()
   },
+  setDepth: (n) => {
+    if (!isDepth(n)) return
+    set({ depth: n })
+    void get().loadCandles()
+  },
   setLang: (l) => {
     if (typeof document !== 'undefined') document.documentElement.lang = l
     set({ lang: l })
   },
+  setHoldout: (on) => set({ holdout: on }),
+
+  importCsv: (name, text) => {
+    const parsed = parseCsv(text)
+    if (!parsed.ok) return parsed.error
+    ++loadSeq // a download still on its way must not replace the file
+    const custom = { name: name.replace(/\.[A-Za-z0-9]+$/, '').slice(0, 40) || 'CSV', candles: parsed.candles, timeframe: parsed.timeframe }
+    set({
+      custom, market: CUSTOM_MARKET, candles: custom.candles, candlesTf: custom.timeframe,
+      dataState: 'custom', dataError: null,
+    })
+    return null
+  },
 
   loadCandles: async () => {
-    const { market, timeframe } = get()
+    const { market, timeframe, depth, custom } = get()
     const seq = ++loadSeq
+    if (market === CUSTOM_MARKET && custom) {
+      set({ candles: custom.candles, candlesTf: custom.timeframe, dataState: 'custom', dataError: null })
+      return
+    }
     if (market === SAMPLE_MARKET) {
-      set({ candles: generateCandles(SAMPLE_BARS, 42), dataState: 'sample', dataError: null })
+      set({ candles: generateCandles(SAMPLE_BARS, 42), candlesTf: SAMPLE_TF, dataState: 'sample', dataError: null })
       return
     }
     set({ dataState: 'loading', dataError: null })
     try {
-      const candles = await fetchCandles(market, timeframe)
+      const candles = await fetchCandles(market, timeframe, depth)
       if (seq !== loadSeq) return
-      set({ candles, dataState: 'live', dataError: null })
+      set({ candles, candlesTf: pineTimeframe(timeframe), dataState: 'live', dataError: null })
     } catch (err) {
       if (seq !== loadSeq) return
       set({
         candles: generateCandles(SAMPLE_BARS, 42),
+        candlesTf: SAMPLE_TF,
         dataState: 'fallback',
         dataError: err instanceof Error ? err.message : String(err),
       })
@@ -191,13 +241,13 @@ export const useBuilder = create<BuilderState>((set, get) => ({
 
   run: async (gen) => {
     const seq = ++runSeq
-    const { candles } = get()
+    const { candles, candlesTf, market } = get()
     if (gen.error || !gen.code || candles.length === 0) {
       set({ runResult: null, runFor: null, isRunning: false })
       return
     }
     set({ isRunning: true })
-    const result = await runPine(gen.code, candles, gen.plotMeta)
+    const result = await runPine(gen.code, candles, gen.plotMeta, { timeframe: candlesTf, ticker: market })
     if (seq !== runSeq) return
     set({ isRunning: false, runResult: { ...result, isStrategy: gen.isStrategy }, runFor: candles })
   },
@@ -205,9 +255,10 @@ export const useBuilder = create<BuilderState>((set, get) => ({
   loadExample: (key) => get().applyState(example(key)),
 
   applyState: (state) => {
-    const { market, timeframe, instance } = get()
+    const { market, timeframe, depth, instance } = get()
     const nextMarket = state.market ?? market
     const nextTimeframe = isTimeframe(state.timeframe) ? state.timeframe : timeframe
+    const nextDepth = isDepth(state.depth) ? state.depth : depth
     set({
       nodes: state.nodes,
       edges: state.edges,
@@ -215,17 +266,18 @@ export const useBuilder = create<BuilderState>((set, get) => ({
       settings: cleanSettings(state.settings),
       market: nextMarket,
       timeframe: nextTimeframe,
+      depth: nextDepth,
     })
     // runResult is left alone on purpose: the run is triggered by a change in
     // the generated script, and loading the strategy already on the canvas
     // changes nothing, so wiping the result here would leave the panels empty.
-    if (nextMarket !== market || nextTimeframe !== timeframe) void get().loadCandles()
+    if (nextMarket !== market || nextTimeframe !== timeframe || nextDepth !== depth) void get().loadCandles()
     if (instance) setTimeout(() => instance.fitView({ padding: 0.15 }), 50)
   },
 
   snapshot: () => {
-    const { nodes, edges, title, settings, market, timeframe } = get()
-    return { title, nodes, edges, settings, market, timeframe }
+    const { nodes, edges, title, settings, market, timeframe, depth } = get()
+    return { title, nodes, edges, settings, market, timeframe, depth }
   },
 
   clear: () => set({ nodes: [], edges: [], runResult: null, runFor: null }),

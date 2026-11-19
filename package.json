@@ -1,7 +1,7 @@
 {
   "name": "signalforge-builder",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Visual strategy builder: blocks to Pine Script v6, backtest in the browser, alerts ready for MetaTrader 5.",
   "license": "AGPL-3.0-only",
   "repository": {

@@ -60,12 +60,76 @@ describe('sanitizeState', () => {
     expect(out.edges[0].targetHandle).toBeNull()
     expect(out.settings).toEqual({
       lot: 0.01, symbol: 'XAUUSD', stopKind: 'atr', stopValue: 1.5, targetKind: 'rr', targetValue: 3,
+      // what the file did not carry gets the defaults
+      trailKind: 'none', trailValue: 2, beKind: 'none', beValue: 1, maxBars: 0,
+      sizeKind: 'equity', sizeValue: 100, feePct: 0.05, slipPct: 0.02,
     })
     expect(out.market).toBeUndefined()
     expect(out.timeframe).toBeUndefined()
     // Whatever came in, the script that comes out is well formed.
     const { code } = generatePine(out.nodes, out.edges, out.title, out.settings)
     expect(code).toContain('plot(v_i, "T\\" )", color=color.blue')
+  })
+
+  it('keeps the newer settings inside their limits', () => {
+    const { settings: st } = sanitizeState({
+      nodes: [],
+      settings: {
+        trailKind: 'rr', trailValue: -4, beKind: 'rr', beValue: 1e9, maxBars: -12.6,
+        sizeKind: 'martingale', sizeValue: 0, feePct: 80, slipPct: 'x',
+      },
+    })!
+    expect(st).toMatchObject({
+      trailKind: 'none', trailValue: 4, beKind: 'rr', beValue: 1000, maxBars: 13,
+      sizeKind: 'equity', sizeValue: 0.01, feePct: 5, slipPct: 0.02,
+    })
+  })
+
+  it('a block keeps only the fields it has, each inside its limits', () => {
+    const data = (raw: Record<string, unknown>) =>
+      sanitizeState({ nodes: [{ id: 'x', position: { x: 0, y: 0 }, data: raw }] })!.nodes[0]?.data
+    expect(data({ kind: 'indicator', indicator: 'ema', length: 9, params: { mult: 3 }, tf: 'D' }))
+      .toEqual({ kind: 'indicator', indicator: 'ema', length: 9, source: 'close' })
+    expect(data({ kind: 'indicator', indicator: 'bb', params: { mult: 'abc', evil: 1 } }))
+      .toEqual({ kind: 'indicator', indicator: 'bb', length: 20, source: 'close', params: { mult: 2 } })
+    expect(data({ kind: 'indicator', indicator: 'htf_ema', tf: '1"); x' }))
+      .toEqual({ kind: 'indicator', indicator: 'htf_ema', length: 50, source: 'close', tf: '240' })
+    expect(data({ kind: 'indicator', indicator: 'mfi' })).toMatchObject({ source: 'hlc3' })
+    expect(data({ kind: 'condition', condition: 'rising', length: 0 }))
+      .toEqual({ kind: 'condition', condition: 'rising', sourceA: 'close', sourceB: 'close', length: 1 })
+    expect(data({ kind: 'condition', condition: 'session', from: 99, to: -5, tz: 'Moon' }))
+      .toEqual({ kind: 'condition', condition: 'session', sourceA: 'close', sourceB: 'close', from: 23, to: 1, tz: 'UTC' })
+    expect(data({ kind: 'condition', condition: 'weekdays', days: '6-2-2-9-x', tz: 'Asia/Tokyo' }))
+      .toEqual({ kind: 'condition', condition: 'weekdays', sourceA: 'close', sourceB: 'close', days: '26', tz: 'Asia/Tokyo' })
+    expect(data({ kind: 'condition', condition: 'gt', length: 5, days: '1', tz: 'UTC' }))
+      .toEqual({ kind: 'condition', condition: 'gt', sourceA: 'close', sourceB: 'close' })
+    expect(data({ kind: 'condition', condition: 'toString' })).toBeUndefined()
+  })
+
+  it('a wire from a block with several outputs always names one that exists', () => {
+    const out = sanitizeState({
+      nodes: [
+        { id: 'b', position: {}, data: { kind: 'indicator', indicator: 'bb' } },
+        { id: 'e', position: {}, data: { kind: 'indicator', indicator: 'ema' } },
+        { id: 'p', position: {}, data: { kind: 'plot' } },
+        { id: 'q', position: {}, data: { kind: 'plot' } },
+        { id: 'r', position: {}, data: { kind: 'plot' } },
+      ],
+      edges: [
+        { source: 'b', target: 'p', sourceHandle: 'lower' },
+        { source: 'b', target: 'q', sourceHandle: '__proto__' },
+        { source: 'e', target: 'r', sourceHandle: 'lower' },
+      ],
+    })!
+    expect(out.edges.map((e) => [e.id, e.sourceHandle])).toEqual([
+      ['e-b.lower-p-in', 'lower'], ['e-b.basis-q-in', 'basis'], ['e-e-r-in', null],
+    ])
+  })
+
+  it('remembers how many candles to load, if it is a depth on offer', () => {
+    expect(sanitizeState({ nodes: [], depth: 5000 })?.depth).toBe(5000)
+    expect(sanitizeState({ nodes: [], depth: 999999 })?.depth).toBeUndefined()
+    expect(sanitizeState({ nodes: [], market: 'CUSTOM' })?.market).toBeUndefined()
   })
 
   it('refuses input that is not a strategy', () => {
