@@ -1,45 +1,45 @@
-import { PineTS } from 'pinets'
-import type { Candle, PlotResult, RunResult, PlotStyle, SignalMarker, BacktestStats } from '../types'
+import type { Candle, PlotMeta, PlotResult, RunResult, SignalMarker, BacktestStats } from '../types'
 
-// Metadata de un plot para reconstruir su serie
 interface RawPlot {
-  data: any[]
+  data: unknown[]
 }
 
-// Estructura de una operación (Trade) expuesta por PineTS
+// A trade as PineTS exposes it (only the fields used here).
 interface PineTrade {
   entry_bar_index: number
   exit_bar_index?: number
-  size: number          // signed: >0 long, <0 short
+  size: number // signed: >0 long, <0 short
   status: 'open' | 'closed'
   profit?: number
 }
 
-// Estado de estrategia expuesto por PineTS (solo los campos que usamos)
 interface PineStrategy {
   closedtrades?: PineTrade[]
   opentrades?: PineTrade[]
+  initial_capital?: number
   netprofit?: number
   grossprofit?: number
   grossloss?: number
-  max_drawdown?: number
   max_drawdown_percent_value?: number
-  sharpe_ratio?: number
-  cagr?: number
 }
 
 const num = (v: unknown, fallback = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback
 
+function plotValue(d: unknown): number {
+  if (typeof d === 'number') return d
+  if (d && typeof (d as { value?: unknown }).value === 'number') return (d as { value: number }).value
+  return NaN
+}
+
 /**
- * Ejecuta un script Pine con PineTS sobre un array de velas OHLCV.
- * Devuelve las series de cada plot, los marcadores de compra/venta y
- * las estadísticas de backtest extraídas de las operaciones.
+ * Runs a Pine script with PineTS over OHLCV candles and returns the series
+ * of each plot, the buy/sell markers and the backtest figures.
  */
 export async function runPine(
   code: string,
   candles: Candle[],
-  plotMeta: { title: string; color: string; style: PlotStyle }[],
+  plotMeta: PlotMeta[],
 ): Promise<RunResult> {
   const base: Omit<RunResult, 'ok' | 'error'> = {
     plots: [],
@@ -49,35 +49,31 @@ export async function runPine(
     barCount: candles.length,
   }
 
-  if (!code.trim()) {
-    return { ok: false, ...base, error: 'No hay código que ejecutar.' }
-  }
+  if (!code.trim()) return { ok: false, ...base, error: 'Nothing to run.' }
+  if (candles.length === 0) return { ok: false, ...base, error: 'No candles loaded.' }
 
   try {
+    // Loaded on first use: the engine is two thirds of the download and the
+    // canvas does not need it to paint.
+    const { PineTS } = await import('pinets')
     const pine = new PineTS(candles)
     await pine.ready()
 
-    const ctx: any = await pine.run(code)
-    const plots = ctx.plots as Record<string, RawPlot> | undefined
-    const strategy = ctx.strategy as PineStrategy | undefined
+    const ctx = (await pine.run(code)) as { plots?: Record<string, RawPlot>; strategy?: PineStrategy }
+    const plots = ctx.plots
+    const strategy = ctx.strategy
 
-    // ── Extraer series de plots ──
-    const results: PlotResult[] = plotMeta.map((meta) => {
-      const raw = plots?.[meta.title]
-      const series = raw?.data ?? []
-      const data = series.map((d: any) => {
-        if (typeof d === 'number') return d
-        if (d && typeof d.value === 'number') return d.value
-        return NaN
-      })
-      return { ...meta, data }
-    })
+    const results: PlotResult[] = plotMeta.map((meta) => ({
+      ...meta,
+      data: (plots?.[meta.title]?.data ?? []).map(plotValue),
+    }))
 
-    // ── Extraer marcadores de operaciones ──
+    const isStrategy =
+      !!strategy && (strategy.closedtrades !== undefined || strategy.opentrades !== undefined)
     const markers: SignalMarker[] = []
     let stats: BacktestStats | null = null
 
-    if (strategy && (strategy.closedtrades !== undefined || strategy.opentrades !== undefined)) {
+    if (isStrategy && strategy) {
       const closed = strategy.closedtrades ?? []
       const open = strategy.opentrades ?? []
 
@@ -86,13 +82,11 @@ export async function runPine(
           markers.push({ index: t.entry_bar_index, side: t.size >= 0 ? 'buy' : 'sell' })
         }
         if (t.status === 'closed' && Number.isInteger(t.exit_bar_index)) {
-          const exitIdx = t.exit_bar_index as number
-          markers.push({ index: exitIdx, side: t.size >= 0 ? 'sell' : 'buy' })
+          markers.push({ index: t.exit_bar_index as number, side: t.size >= 0 ? 'sell' : 'buy' })
         }
       }
       markers.sort((a, b) => a.index - b.index)
 
-      // ── Calcular estadísticas de backtest ──
       let wins = 0
       let losses = 0
       for (const t of closed) {
@@ -101,38 +95,30 @@ export async function runPine(
         else if (p < 0) losses++
       }
       const totalTrades = closed.length
+      const initialCapital = num(strategy.initial_capital, 10000)
       const grossProfit = num(strategy.grossprofit)
       const grossLoss = Math.abs(num(strategy.grossloss))
       const netProfit = num(strategy.netprofit)
-      const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0)
-      const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0
 
       stats = {
+        initialCapital,
         netProfit,
+        netProfitPct: initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0,
         grossProfit,
         grossLoss,
-        profitFactor,
-        winRate,
+        profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
+        winRate: totalTrades > 0 ? (wins / totalTrades) * 100 : 0,
         totalTrades,
         winTrades: wins,
         lossTrades: losses,
         openTrades: open.length,
-        maxDrawdown: Math.abs(num(strategy.max_drawdown)),
         maxDrawdownPct: Math.abs(num(strategy.max_drawdown_percent_value)),
         avgTrade: totalTrades > 0 ? netProfit / totalTrades : 0,
-        sharpe: num(strategy.sharpe_ratio),
-        cagr: num(strategy.cagr),
       }
     }
 
-    const isStrategy = !!strategy && (strategy.closedtrades !== undefined || strategy.opentrades !== undefined)
-
     return { ok: true, plots: results, markers, isStrategy, stats, barCount: candles.length }
   } catch (err) {
-    return {
-      ok: false,
-      ...base,
-      error: err instanceof Error ? err.message : String(err),
-    }
+    return { ok: false, ...base, error: err instanceof Error ? err.message : String(err) }
   }
 }

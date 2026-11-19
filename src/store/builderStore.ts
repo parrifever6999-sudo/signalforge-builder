@@ -1,254 +1,232 @@
 import { create } from 'zustand'
-import { addEdge, applyNodeChanges, applyEdgeChanges } from '@xyflow/react'
-import type { Node, Edge, Connection, ReactFlowInstance, Viewport } from '@xyflow/react'
-import type { BlockData, IndicatorKind, PlotStyle, BuilderNode, BuilderGraph, RunResult } from '../types'
-import { INDICATORS, PLOT_COLORS } from '../blocks/definitions'
-import { generatePine } from '../codegen/generator'
+import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react'
+import type { Edge, Connection, NodeChange, EdgeChange, ReactFlowInstance } from '@xyflow/react'
+import type {
+  BlockData, BlockType, BuilderNode, Candle, RunResult, StrategySettings,
+  IndicatorKind, ConditionKind, ActionKind,
+} from '../types'
+import { DEFAULT_SETTINGS } from '../types'
+import { ACTIONS, CONDITIONS, INDICATORS, PLOT_COLORS } from '../blocks/definitions'
+import type { GenResult } from '../codegen/generator'
 import { runPine } from '../engine/pineRunner'
 import { generateCandles } from '../data/sampleData'
+import { fetchCandles, SAMPLE_MARKET } from '../data/market'
+import type { Timeframe } from '../data/market'
+import { isTimeframe } from '../data/market'
+import type { Lang } from '../lang'
+import { canConnect, connectEdge } from './connect'
+import { cleanSettings } from './graphIO'
+import type { SavedState } from './graphIO'
+import { example } from './examples'
+import type { ExampleKey } from './examples'
 
-// Estado persistente del grafo
-interface GraphState {
-  nodes: Node<BlockData>[]
-  edges: Edge[]
-  lastViewport: Viewport | null
-}
+// 'live' = real candles, 'sample' = the user chose the offline series,
+// 'fallback' = real candles failed and the offline series stands in.
+export type DataState = 'loading' | 'live' | 'sample' | 'fallback'
+
+export type FlowInstance = ReactFlowInstance<BuilderNode, Edge>
 
 interface BuilderState {
-  // Grafo
-  nodes: Node<BlockData>[]
+  nodes: BuilderNode[]
   edges: Edge[]
-  onNodesChange: (changes: any) => void
-  onEdgesChange: (changes: any) => void
-  onConnect: (connection: Connection) => void
+  title: string
+  settings: StrategySettings
+  market: string
+  timeframe: Timeframe
+  lang: Lang
 
-  // Selección / edición
-  selectedId: string | null
-  selectNode: (id: string | null) => void
-  updateNodeData: (id: string, patch: Partial<BlockData>) => void
+  candles: Candle[]
+  dataState: DataState
+  dataError: string | null
 
-  // Configuración general
-  strategyTitle: string
-  setStrategyTitle: (t: string) => void
-
-  // Resultados
   runResult: RunResult | null
+  runFor: Candle[] | null // the candles runResult was computed on
   isRunning: boolean
 
-  // Persistencia
-  instance: ReactFlowInstance | null
-  setInstance: (i: ReactFlowInstance | null) => void
+  instance: FlowInstance | null
+  setInstance: (i: FlowInstance | null) => void
 
-  // Acciones
-  addBlock: (blockKey: string, type: string, position?: { x: number; y: number }) => void
+  onNodesChange: (changes: NodeChange<BuilderNode>[]) => void
+  onEdgesChange: (changes: EdgeChange[]) => void
+  onConnect: (connection: Connection) => void
+  updateNodeData: (id: string, patch: Record<string, unknown>) => void
+  addBlock: (key: string, type: BlockType, position?: { x: number; y: number }) => void
   removeNode: (id: string) => void
-  onDrop: (event: any, screenToFlowPosition: (p: { x: number; y: number }) => { x: number; y: number }) => void
-  run: () => Promise<void>
-  loadDemo: () => void
-  saveGraph: () => GraphState | null
-  loadGraph: (state: GraphState) => void
+
+  setTitle: (t: string) => void
+  setSettings: (patch: Partial<StrategySettings>) => void
+  setMarket: (m: string) => void
+  setTimeframe: (tf: Timeframe) => void
+  setLang: (l: Lang) => void
+
+  loadCandles: () => Promise<void>
+  run: (gen: GenResult) => Promise<void>
+
+  loadExample: (key: ExampleKey) => void
+  applyState: (state: SavedState) => void
+  snapshot: () => SavedState
   clear: () => void
 }
 
-let idCounter = 1
-const nextId = () => `n${idCounter++}`
+const SAMPLE_BARS = 600
 
-// Fábrica de un nodo según el bloque del palette
-function createBlockNode(blockKey: string, type: string, position: { x: number; y: number }): BuilderNode | null {
-  const id = nextId()
-  const common = { id, position }
-
-  if (type === 'source') {
-    return {
-      ...common,
-      type: 'block',
-      data: { kind: 'source', source: 'close' },
+function blockData(key: string, type: BlockType, plotCount: number): BlockData | null {
+  switch (type) {
+    case 'source':
+      return { kind: 'source', source: 'close' }
+    case 'value':
+      return { kind: 'value', value: 50 }
+    case 'indicator': {
+      const kind = (key in INDICATORS ? key : 'ema') as IndicatorKind
+      const def = INDICATORS[kind]
+      return { kind: 'indicator', indicator: kind, length: def.defaultLength, source: def.defaultSource }
     }
-  }
-
-  if (type === 'indicator') {
-    const def = INDICATORS[blockKey as IndicatorKind] ?? INDICATORS.sma
-    const key = (blockKey in INDICATORS ? blockKey : 'sma') as IndicatorKind
-    return {
-      ...common,
-      type: 'block',
-      data: { kind: 'indicator', indicator: key, length: def.defaultLength, source: 'close' },
+    case 'condition': {
+      const kind = (key in CONDITIONS ? key : 'crossover') as ConditionKind
+      return { kind: 'condition', condition: kind, sourceA: 'close', sourceB: 'close' }
     }
-  }
-
-  if (type === 'condition') {
-    const key = (blockKey === 'crossunder' ? 'crossunder' : 'crossover') as 'crossover' | 'crossunder'
-    return {
-      ...common,
-      type: 'block',
-      data: { kind: 'condition', condition: key, sourceA: 'close', sourceB: 'close' },
+    case 'action': {
+      const kind = (ACTIONS.includes(key as ActionKind) ? key : 'entry_long') as ActionKind
+      return { kind: 'action', action: kind }
     }
+    case 'plot':
+      return { kind: 'plot', title: 'Line', color: PLOT_COLORS[plotCount % PLOT_COLORS.length].key, style: 'line' }
+    default:
+      return null
   }
-
-  if (type === 'action') {
-    const valid = ['entry_long', 'entry_short', 'exit_long', 'exit_short']
-    const key = (valid.includes(blockKey) ? blockKey : 'entry_long') as
-      'entry_long' | 'entry_short' | 'exit_long' | 'exit_short'
-    return {
-      ...common,
-      type: 'block',
-      data: { kind: 'action', action: key },
-    }
-  }
-
-  if (type === 'plot') {
-    return {
-      ...common,
-      type: 'block',
-      data: { kind: 'plot', title: 'My Plot', color: PLOT_COLORS[0].key, style: 'line' },
-    }
-  }
-
-  return null
 }
+
+// Bumped on every request so a slow answer cannot overwrite a newer one.
+let loadSeq = 0
+let runSeq = 0
 
 export const useBuilder = create<BuilderState>((set, get) => ({
   nodes: [],
   edges: [],
-  lastViewport: null,
-  selectedId: null,
-  strategyTitle: 'My Strategy',
-  runResult: null,
-  isRunning: false,
-  instance: null,
+  title: 'My Strategy',
+  settings: { ...DEFAULT_SETTINGS },
+  market: 'BTCUSDT',
+  timeframe: '1h',
+  lang: 'en',
 
+  candles: [],
+  dataState: 'loading',
+  dataError: null,
+
+  runResult: null,
+  runFor: null,
+  isRunning: false,
+
+  instance: null,
   setInstance: (i) => set({ instance: i }),
 
-  onNodesChange: (changes) =>
-    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) as Node<BlockData>[] })),
-
-  onEdgesChange: (changes) =>
-    set((s) => ({ edges: applyEdgeChanges(changes, s.edges) })),
+  onNodesChange: (changes) => set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) })),
+  onEdgesChange: (changes) => set((s) => ({ edges: applyEdgeChanges(changes, s.edges) })),
 
   onConnect: (connection) =>
-    set((s) => ({ edges: addEdge(connection, s.edges) })),
-
-  selectNode: (id) => set({ selectedId: id }),
+    set((s) => (canConnect(s.nodes, s.edges, connection) ? { edges: connectEdge(s.edges, connection) } : s)),
 
   updateNodeData: (id, patch) =>
     set((s) => ({
-      nodes: s.nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, ...patch } as BlockData } : n,
-      ),
+      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } as BlockData } : n)),
     })),
 
-  setStrategyTitle: (t) => set({ strategyTitle: t }),
-
-  addBlock: (blockKey, type, position) => {
-    const pos = position ?? {
-      x: 80 + Math.random() * 200,
-      y: 80 + Math.random() * 300,
-    }
-    const node = createBlockNode(blockKey, type, pos)
-    if (node) set((s) => ({ nodes: [...s.nodes, node] }))
+  addBlock: (key, type, position) => {
+    const { nodes, instance } = get()
+    const data = blockData(key, type, nodes.filter((n) => n.data.kind === 'plot').length)
+    if (!data) return
+    let counter = nodes.length + 1
+    while (nodes.some((n) => n.id === `n${counter}`)) counter++
+    // Without a drop point, land near the middle of what the user is looking at.
+    const jitter = () => Math.round((Math.random() - 0.5) * 80)
+    const pos = position ?? (instance
+      ? instance.screenToFlowPosition({ x: window.innerWidth / 2 + jitter(), y: window.innerHeight / 3 + jitter() })
+      : { x: 80 + jitter(), y: 80 + jitter() })
+    set({ nodes: [...nodes, { id: `n${counter}`, type: 'block', position: pos, data }] })
   },
 
   removeNode: (id) =>
     set((s) => ({
       nodes: s.nodes.filter((n) => n.id !== id),
       edges: s.edges.filter((e) => e.source !== id && e.target !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
     })),
 
-  onDrop: (event, screenToFlowPosition) => {
-    event.preventDefault()
-    const raw = event.dataTransfer.getData('application/pineblock')
-    if (!raw) return
-    let parsed: { blockKey: string; type: string }
+  setTitle: (t) => set({ title: t.slice(0, 80) }),
+  setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+
+  setMarket: (m) => {
+    set({ market: m })
+    void get().loadCandles()
+  },
+  setTimeframe: (tf) => {
+    set({ timeframe: tf })
+    void get().loadCandles()
+  },
+  setLang: (l) => {
+    if (typeof document !== 'undefined') document.documentElement.lang = l
+    set({ lang: l })
+  },
+
+  loadCandles: async () => {
+    const { market, timeframe } = get()
+    const seq = ++loadSeq
+    if (market === SAMPLE_MARKET) {
+      set({ candles: generateCandles(SAMPLE_BARS, 42), dataState: 'sample', dataError: null })
+      return
+    }
+    set({ dataState: 'loading', dataError: null })
     try {
-      parsed = JSON.parse(raw)
-    } catch {
-      return
-    }
-    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-    get().addBlock(parsed.blockKey, parsed.type, position)
-  },
-
-  run: async () => {
-    const { nodes, edges, strategyTitle } = get()
-    set({ isRunning: true, runResult: null })
-
-    const gen = generatePine(nodes as BuilderNode[], edges, strategyTitle)
-    const { code, error } = gen
-
-    if (error || !code) {
+      const candles = await fetchCandles(market, timeframe)
+      if (seq !== loadSeq) return
+      set({ candles, dataState: 'live', dataError: null })
+    } catch (err) {
+      if (seq !== loadSeq) return
       set({
-        isRunning: false,
-        runResult: { ok: false, plots: [], markers: [], isStrategy: false, stats: null, error: error ?? 'Sin código.', barCount: 0 },
+        candles: generateCandles(SAMPLE_BARS, 42),
+        dataState: 'fallback',
+        dataError: err instanceof Error ? err.message : String(err),
       })
+    }
+  },
+
+  run: async (gen) => {
+    const seq = ++runSeq
+    const { candles } = get()
+    if (gen.error || !gen.code || candles.length === 0) {
+      set({ runResult: null, runFor: null, isRunning: false })
       return
     }
-
-    // Metadata de plots en orden de aparición
-    const plotMeta = (nodes as BuilderNode[])
-      .filter((n) => n.data?.kind === 'plot')
-      .map((n) => {
-        const d = n.data as any
-        return { title: d.title as string, color: d.color as string, style: d.style as PlotStyle }
-      })
-
-    const candles = generateCandles(300, 42)
-    const result = await runPine(code, candles, plotMeta)
-    set({ isRunning: false, runResult: { ...result, isStrategy: gen.isStrategy } })
+    set({ isRunning: true })
+    const result = await runPine(gen.code, candles, gen.plotMeta)
+    if (seq !== runSeq) return
+    set({ isRunning: false, runResult: { ...result, isStrategy: gen.isStrategy }, runFor: candles })
   },
 
-  loadDemo: () => {
-    idCounter = 1
-    // Estrategia de ejemplo: EMA 9 / EMA 21 con cruce → entrar long / salir long
-    const source = createBlockNode('close', 'source', { x: 40, y: 220 })
-    const emaFast = createBlockNode('ema', 'indicator', { x: 280, y: 120 })
-    const emaSlow = createBlockNode('ema', 'indicator', { x: 280, y: 320 })
-    const cross = createBlockNode('crossover', 'condition', { x: 540, y: 160 })
-    const entryLong = createBlockNode('entry_long', 'action', { x: 820, y: 80 })
-    const crossUnder = createBlockNode('crossunder', 'condition', { x: 540, y: 360 })
-    const exitLong = createBlockNode('exit_long', 'action', { x: 820, y: 380 })
-    const plotFast = createBlockNode('plot', 'plot', { x: 820, y: 230 })
-    if (!source || !emaFast || !emaSlow || !cross || !entryLong || !crossUnder || !exitLong || !plotFast) return
+  loadExample: (key) => get().applyState(example(key)),
 
-    ;(emaFast.data as any).length = 9
-    ;(emaSlow.data as any).length = 21
-    ;(cross.data as any).condition = 'crossover'
-    ;(crossUnder.data as any).condition = 'crossunder'
-    ;(plotFast.data as any).title = 'EMA 9'
-    ;(plotFast.data as any).color = PLOT_COLORS[0].key
-    ;(entryLong.data as any).action = 'entry_long'
-    ;(exitLong.data as any).action = 'exit_long'
-
-    const nodes = [source, emaFast, emaSlow, cross, crossUnder, entryLong, exitLong, plotFast]
-    const edges: Edge[] = [
-      // Fuente a las dos EMAs
-      { id: 'e1', source: source.id, target: emaFast.id },
-      { id: 'e2', source: source.id, target: emaSlow.id },
-      // EMA rápida → A del crossover ; EMA lenta → B del crossover
-      { id: 'e3', source: emaFast.id, target: cross.id, targetHandle: 'a' },
-      { id: 'e4', source: emaSlow.id, target: cross.id, targetHandle: 'b' },
-      { id: 'e5', source: emaFast.id, target: crossUnder.id, targetHandle: 'a' },
-      { id: 'e6', source: emaSlow.id, target: crossUnder.id, targetHandle: 'b' },
-      // Condiciones → acciones
-      { id: 'e7', source: cross.id, target: entryLong.id },
-      { id: 'e8', source: crossUnder.id, target: exitLong.id },
-      // EMA rápida al plot
-      { id: 'e9', source: emaFast.id, target: plotFast.id },
-    ]
-    set({ nodes, edges, strategyTitle: 'EMA 9/21 Crossover Strategy', runResult: null })
-  },
-
-  saveGraph: () => {
-    const { nodes, edges, instance } = get()
-    return { nodes, edges, lastViewport: instance?.getViewport() ?? null }
-  },
-
-  loadGraph: (state) =>
+  applyState: (state) => {
+    const { market, timeframe, instance } = get()
+    const nextMarket = state.market ?? market
+    const nextTimeframe = isTimeframe(state.timeframe) ? state.timeframe : timeframe
     set({
       nodes: state.nodes,
       edges: state.edges,
-      runResult: null,
-    }),
+      title: state.title,
+      settings: cleanSettings(state.settings),
+      market: nextMarket,
+      timeframe: nextTimeframe,
+    })
+    // runResult is left alone on purpose: the run is triggered by a change in
+    // the generated script, and loading the strategy already on the canvas
+    // changes nothing, so wiping the result here would leave the panels empty.
+    if (nextMarket !== market || nextTimeframe !== timeframe) void get().loadCandles()
+    if (instance) setTimeout(() => instance.fitView({ padding: 0.15 }), 50)
+  },
 
-  clear: () => set({ nodes: [], edges: [], selectedId: null, runResult: null }),
+  snapshot: () => {
+    const { nodes, edges, title, settings, market, timeframe } = get()
+    return { title, nodes, edges, settings, market, timeframe }
+  },
+
+  clear: () => set({ nodes: [], edges: [], runResult: null, runFor: null }),
 }))

@@ -1,170 +1,179 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
-import type { BuilderNode } from '../types'
+import type {
+  BuilderNode, IndicatorKind, SourceKind, PlotStyle, ConditionKind, ActionKind, BlockData,
+} from '../types'
 import { useBuilder } from '../store/builderStore'
+import { useT } from '../i18n'
 import {
   INDICATORS, SOURCES, PLOT_COLORS, PLOT_STYLES, TYPE_COLORS, CONDITIONS, ACTIONS,
 } from '../blocks/definitions'
-import type { IndicatorKind, SourceKind, PlotStyle, ConditionKind, ActionKind } from '../types'
 
-const BlockNode = memo(({ id, data, selected }: NodeProps<BuilderNode>) => {
-  const updateNodeData = useBuilder((s) => s.updateNodeData)
-  const removeNode = useBuilder((s) => s.removeNode)
-  const d = data
+const isLogic = (d: BlockData) => d.kind === 'condition' && CONDITIONS[d.condition]?.kind === 'logic'
+
+function SourceSelect({ value, onChange, label }: {
+  value: SourceKind
+  onChange: (v: SourceKind) => void
+  label: string
+}) {
+  return (
+    <select className="nodrag" aria-label={label} value={value} onChange={(e) => onChange(e.target.value as SourceKind)}>
+      {SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+    </select>
+  )
+}
+
+const BlockNode = memo(({ id, data: d }: NodeProps<BuilderNode>) => {
+  const t = useT()
+  const update = useBuilder((s) => s.updateNodeData)
+  const remove = useBuilder((s) => s.removeNode)
+  // "b" is the second input of a condition; anything else lands on the first.
+  const wiredA = useBuilder((s) => s.edges.some((e) => e.target === id && e.targetHandle !== 'b'))
+  const wiredB = useBuilder((s) => s.edges.some((e) => e.target === id && e.targetHandle === 'b'))
 
   if (!d) return null
 
-  const accent =
-    d.kind === 'source' ? TYPE_COLORS.source
-    : d.kind === 'indicator' ? TYPE_COLORS.indicator
-    : d.kind === 'condition' ? TYPE_COLORS.condition
-    : d.kind === 'action' ? TYPE_COLORS.action
-    : TYPE_COLORS.plot
-
-  const hasInput = d.kind !== 'source'
+  const logic = isLogic(d)
+  const accent = logic ? '#2dd4bf' : TYPE_COLORS[d.kind]
+  const kindLabel = t(logic ? 'kind.logic' : `kind.${d.kind}`)
+  const indicator = d.kind === 'indicator' ? INDICATORS[d.indicator] : null
+  const singleInput = d.kind === 'action' || d.kind === 'plot' || (indicator?.usesSource ?? false)
   const hasOutput = d.kind !== 'plot' && d.kind !== 'action'
 
   return (
-    <div
-      className="block-node"
-      style={{ borderTopColor: accent }}
-      onDoubleClick={() => removeNode(id)}
-      title="Doble clic para eliminar"
-    >
-      {hasInput && d.kind !== 'condition' && (
-        <Handle type="target" position={Position.Top} />
-      )}
+    <div className="block-node" style={{ borderTopColor: accent }}>
+      {singleInput && <Handle type="target" position={Position.Left} />}
 
-      {d.kind === 'condition' && (
-        <>
-          <Handle type="target" position={Position.Top} id="a" style={{ left: '35%' }} />
-          <Handle type="target" position={Position.Top} id="b" style={{ left: '65%' }} />
-          <div className="handle-labels">
-            <span style={{ left: '35%' }}>A</span>
-            <span style={{ left: '65%' }}>B</span>
-          </div>
-        </>
-      )}
-
-      <div className="block-head" style={{ background: accent }}>
-        <span className="block-kind">{d.kind.toUpperCase()}</span>
+      <div className="block-head">
+        <span className="block-kind" style={{ color: accent }}>{kindLabel}</span>
+        <button
+          type="button" className="block-delete nodrag"
+          onClick={() => remove(id)} aria-label={t('node.delete')} title={t('node.delete')}
+        >
+          &times;
+        </button>
       </div>
 
       <div className="block-body">
         {d.kind === 'source' && (
-          <select
-            value={d.source}
-            onChange={(e) => updateNodeData(id, { source: e.target.value as SourceKind })}
-          >
-            {SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-          </select>
+          <SourceSelect value={d.source} label={t('kind.source')} onChange={(v) => update(id, { source: v })} />
         )}
 
-        {d.kind === 'indicator' && (
+        {d.kind === 'value' && (
+          <input
+            className="nodrag" type="number" step="any" aria-label={t('node.value')} value={d.value}
+            onChange={(e) => update(id, { value: e.target.value === '' ? 0 : Number(e.target.value) })}
+          />
+        )}
+
+        {d.kind === 'indicator' && indicator && (
           <>
             <select
-              value={d.indicator}
+              className="nodrag" aria-label={t('kind.indicator')} value={d.indicator}
               onChange={(e) => {
                 const key = e.target.value as IndicatorKind
-                updateNodeData(id, { indicator: key, length: INDICATORS[key].defaultLength })
+                update(id, { indicator: key, length: INDICATORS[key].defaultLength, source: INDICATORS[key].defaultSource })
               }}
             >
               {(Object.keys(INDICATORS) as IndicatorKind[]).map((k) => (
                 <option key={k} value={k}>{INDICATORS[k].label}</option>
               ))}
             </select>
-            <label className="field">
-              <span>Periodo</span>
-              <input
-                type="number" min={1} max={500} value={d.length}
-                onChange={(e) => updateNodeData(id, { length: Math.max(1, +e.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>Fuente (si no se conecta)</span>
-              <select
-                value={d.source}
-                onChange={(e) => updateNodeData(id, { source: e.target.value as SourceKind })}
-              >
-                {SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-              </select>
-            </label>
+            {indicator.usesLength && (
+              <label className="field">
+                <span>{t('node.length')}</span>
+                <input
+                  className="nodrag" type="number" min={1} max={5000} value={d.length}
+                  onChange={(e) => update(id, { length: Math.max(1, Math.round(Number(e.target.value)) || 1) })}
+                />
+              </label>
+            )}
+            {indicator.usesSource && (wiredA
+              ? <p className="block-note">{t('node.sourceConnected')}</p>
+              : (
+                <label className="field">
+                  <span>{t('node.source')}</span>
+                  <SourceSelect value={d.source} label={t('node.source')} onChange={(v) => update(id, { source: v })} />
+                </label>
+              ))}
           </>
         )}
 
         {d.kind === 'condition' && (
           <>
             <select
-              value={d.condition}
-              onChange={(e) => updateNodeData(id, { condition: e.target.value as ConditionKind })}
+              className="nodrag" aria-label={kindLabel} value={d.condition}
+              onChange={(e) => update(id, { condition: e.target.value as ConditionKind })}
             >
-              {(Object.keys(CONDITIONS) as ConditionKind[]).map((k) => (
-                <option key={k} value={k}>{CONDITIONS[k].label}</option>
-              ))}
+              {(Object.keys(CONDITIONS) as ConditionKind[])
+                .filter((k) => (CONDITIONS[k].kind === 'logic') === logic)
+                .map((k) => <option key={k} value={k}>{t(`cond.${k}`)}</option>)}
             </select>
-            <div className="field-row">
-              <label className="field">
-                <span>Entrada A</span>
-                <select
-                  value={d.sourceA}
-                  onChange={(e) => updateNodeData(id, { sourceA: e.target.value as SourceKind })}
-                >
-                  {SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-              </label>
-              <label className="field">
-                <span>Entrada B</span>
-                <select
-                  value={d.sourceB}
-                  onChange={(e) => updateNodeData(id, { sourceB: e.target.value as SourceKind })}
-                >
-                  {SOURCES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-              </label>
+
+            <div className="port-row">
+              <Handle type="target" position={Position.Left} id="a" />
+              <span className="port-name">A</span>
+              {!logic && !wiredA && (
+                <SourceSelect
+                  value={d.sourceA} label={t('node.unconnected', { side: 'A' })}
+                  onChange={(v) => update(id, { sourceA: v })}
+                />
+              )}
             </div>
+            <div className="port-row">
+              <Handle type="target" position={Position.Left} id="b" />
+              <span className="port-name">B</span>
+              {!logic && !wiredB && (
+                <SourceSelect
+                  value={d.sourceB} label={t('node.unconnected', { side: 'B' })}
+                  onChange={(v) => update(id, { sourceB: v })}
+                />
+              )}
+            </div>
+            {logic && !(wiredA && wiredB) && <p className="block-note warn">{t('node.needsTwo')}</p>}
           </>
         )}
 
         {d.kind === 'action' && (
-          <select
-            value={d.action}
-            onChange={(e) => updateNodeData(id, { action: e.target.value as ActionKind })}
-          >
-            {(Object.keys(ACTIONS) as ActionKind[]).map((k) => (
-              <option key={k} value={k}>{ACTIONS[k].label}</option>
-            ))}
-          </select>
+          <>
+            <select
+              className="nodrag" aria-label={kindLabel} value={d.action}
+              onChange={(e) => update(id, { action: e.target.value as ActionKind })}
+            >
+              {ACTIONS.map((k) => <option key={k} value={k}>{t(`action.${k}`)}</option>)}
+            </select>
+            {!wiredA && <p className="block-note warn">{t('node.needsCondition')}</p>}
+          </>
         )}
 
         {d.kind === 'plot' && (
           <>
             <input
-              type="text" value={d.title}
-              onChange={(e) => updateNodeData(id, { title: e.target.value })}
-              placeholder="Título del plot"
+              className="nodrag" type="text" maxLength={40} aria-label={t('node.plotTitle')}
+              placeholder={t('node.plotTitle')} value={d.title}
+              onChange={(e) => update(id, { title: e.target.value })}
             />
             <div className="field-row">
               <select
-                value={d.color}
-                onChange={(e) => updateNodeData(id, { color: e.target.value })}
+                className="nodrag" aria-label="color" value={d.color}
+                onChange={(e) => update(id, { color: e.target.value })}
+                style={{ borderLeft: `4px solid ${d.color}` }}
               >
-                {PLOT_COLORS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                {PLOT_COLORS.map((c) => <option key={c.key} value={c.key}>{t(c.pine)}</option>)}
               </select>
               <select
-                value={d.style}
-                onChange={(e) => updateNodeData(id, { style: e.target.value as PlotStyle })}
+                className="nodrag" aria-label="style" value={d.style}
+                onChange={(e) => update(id, { style: e.target.value as PlotStyle })}
               >
-                {PLOT_STYLES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                {PLOT_STYLES.map((s) => <option key={s.key} value={s.key}>{t(`style.${s.key}`)}</option>)}
               </select>
             </div>
           </>
         )}
       </div>
 
-      {selected && <span className="block-badge">seleccionado</span>}
-
-      {hasOutput && <Handle type="source" position={Position.Bottom} />}
+      {hasOutput && <Handle type="source" position={Position.Right} />}
     </div>
   )
 })

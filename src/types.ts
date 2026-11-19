@@ -1,40 +1,38 @@
 import type { Node, Edge } from '@xyflow/react'
 
-// ── Tipos de bloque ──────────────────────────────────────────────
-export type BlockType = 'source' | 'indicator' | 'condition' | 'plot' | 'action'
+// ---- Block kinds -------------------------------------------------------
+export type BlockType = 'source' | 'value' | 'indicator' | 'condition' | 'plot' | 'action'
 
-// Fuentes de datos de precio
 export type SourceKind = 'close' | 'open' | 'high' | 'low' | 'hl2' | 'hlc3' | 'ohlc4' | 'volume'
 
-// Indicadores soportados por el generador (mapeados a ta.*)
 export type IndicatorKind =
   | 'sma' | 'ema' | 'wma' | 'rma' | 'vwma'
-  | 'rsi' | 'atr' | 'cci' | 'mom' | 'roc'
-  | 'stdev' | 'variance' | 'median' | 'mode'
+  | 'bb_upper' | 'bb_lower' | 'highest' | 'lowest'
+  | 'rsi' | 'stoch' | 'cci' | 'mom' | 'roc'
+  | 'macd' | 'macd_signal' | 'macd_hist'
+  | 'atr' | 'stdev'
 
-// Tipos de condición (comparación entre dos series)
+// crossover..lte compare two numeric series; and/or combine two conditions.
 export type ConditionKind =
-  | 'crossover'   // A cruza por encima de B
-  | 'crossunder'  // A cruza por debajo de B
-  | 'gt'          // A > B
-  | 'lt'          // A < B
-  | 'gte'         // A >= B
-  | 'lte'         // A <= B
+  | 'crossover' | 'crossunder'
+  | 'gt' | 'lt' | 'gte' | 'lte'
+  | 'and' | 'or'
 
-// Tipos de acción de estrategia
-export type ActionKind =
-  | 'entry_long'   // strategy.entry("Long", strategy.long)
-  | 'entry_short'  // strategy.entry("Short", strategy.short)
-  | 'exit_long'    // strategy.close("Long")
-  | 'exit_short'   // strategy.close("Short")
+export type ActionKind = 'entry_long' | 'entry_short' | 'exit_long' | 'exit_short'
 
-// Estilos de plot de Pine Script
 export type PlotStyle = 'line' | 'histogram' | 'circles' | 'columns'
 
-// ── Datos de un nodo lógico (payload de React Flow) ──────────────
+// ---- Node payloads -----------------------------------------------------
 export interface SourceData {
   kind: 'source'
   source: SourceKind
+  [key: string]: unknown
+}
+
+// A fixed number, e.g. the 70 in "RSI < 70".
+export interface ValueData {
+  kind: 'value'
+  value: number
   [key: string]: unknown
 }
 
@@ -42,15 +40,14 @@ export interface IndicatorData {
   kind: 'indicator'
   indicator: IndicatorKind
   length: number
-  source: SourceKind   // fuente a la que se aplica (si no viene conectada)
+  source: SourceKind // used when nothing is connected
   [key: string]: unknown
 }
 
 export interface ConditionData {
   kind: 'condition'
   condition: ConditionKind
-  // Fallbacks si no hay conexiones (A y B)
-  sourceA: SourceKind
+  sourceA: SourceKind // fallbacks when a handle is not connected
   sourceB: SourceKind
   [key: string]: unknown
 }
@@ -69,47 +66,72 @@ export interface ActionData {
   [key: string]: unknown
 }
 
-export type BlockData = SourceData | IndicatorData | ConditionData | PlotData | ActionData
+export type BlockData = SourceData | ValueData | IndicatorData | ConditionData | PlotData | ActionData
 
-// Nodo de React Flow con nuestro payload
 export type BuilderNode = Node<BlockData, 'block'>
 
-// Grafo completo del builder
 export interface BuilderGraph {
   nodes: BuilderNode[]
   edges: Edge[]
 }
 
-// Marcador de señal (compra/venta) para dibujar en el gráfico
+// ---- Strategy settings (risk + what the MT5 alert carries) --------------
+export type StopKind = 'none' | 'percent' | 'atr'
+export type TargetKind = 'none' | 'percent' | 'atr' | 'rr'
+
+export interface StrategySettings {
+  lot: number          // lot size sent to MT5 with every entry
+  symbol: string       // '' = use the chart symbol (syminfo.ticker)
+  stopKind: StopKind
+  stopValue: number    // percent of price, or ATR multiple
+  targetKind: TargetKind
+  targetValue: number  // percent of price, ATR multiple, or multiple of the stop (rr)
+}
+
+export const DEFAULT_SETTINGS: StrategySettings = {
+  lot: 0.1,
+  symbol: '',
+  stopKind: 'atr',
+  stopValue: 1.5,
+  targetKind: 'rr',
+  targetValue: 2,
+}
+
+// ---- Run results ---------------------------------------------------------
 export interface SignalMarker {
   index: number
   side: 'buy' | 'sell'
 }
 
-// Estadísticas de backtest extraídas de ctx.strategy
 export interface BacktestStats {
+  initialCapital: number
   netProfit: number
+  netProfitPct: number
   grossProfit: number
   grossLoss: number
-  profitFactor: number      // grossprofit / |grossloss|  (Infinity si no hay pérdidas)
-  winRate: number           // 0–100
-  totalTrades: number       // operaciones cerradas
+  profitFactor: number // Infinity when there are no losing trades
+  winRate: number      // 0-100
+  totalTrades: number  // closed trades
   winTrades: number
   lossTrades: number
   openTrades: number
-  maxDrawdown: number       // valor absoluto
-  maxDrawdownPct: number    // %
-  avgTrade: number          // netProfit / totalTrades
-  sharpe: number
-  cagr: number              // %
+  maxDrawdownPct: number
+  avgTrade: number
 }
 
-// Resultado de ejecutar un script Pine con PineTS
-export interface PlotResult {
+// 'price' plots share the candle scale; 'sub' plots (RSI, ATR, 0/1 signals...)
+// get their own pane under the chart.
+export type PlotPane = 'price' | 'sub'
+
+export interface PlotMeta {
   title: string
   color: string
   style: PlotStyle
-  data: number[]   // serie de valores (uno por barra)
+  pane: PlotPane
+}
+
+export interface PlotResult extends PlotMeta {
+  data: number[] // one value per bar
 }
 
 export interface RunResult {
@@ -122,7 +144,6 @@ export interface RunResult {
   barCount: number
 }
 
-// Una vela OHLCV
 export interface Candle {
   open: number
   high: number
@@ -130,4 +151,11 @@ export interface Candle {
   close: number
   volume: number
   openTime: number
+  closeTime?: number
+}
+
+// A message the UI translates: key into the locale files + its parameters.
+export interface Issue {
+  key: string
+  params?: Record<string, string | number>
 }

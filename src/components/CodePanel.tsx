@@ -1,30 +1,36 @@
-import { useMemo } from 'react'
+import { useState } from 'react'
 import { useBuilder } from '../store/builderStore'
-import { generatePine } from '../codegen/generator'
-import type { BuilderNode } from '../types'
+import { useT } from '../i18n'
+import { strategySlug } from '../codegen/generator'
+import type { GenResult } from '../codegen/generator'
 
-// Panel que muestra el código Pine Script generado en vivo
-export function CodePanel() {
-  const nodes = useBuilder((s) => s.nodes)
-  const edges = useBuilder((s) => s.edges)
-  const strategyTitle = useBuilder((s) => s.strategyTitle)
-  const runResult = useBuilder((s) => s.runResult)
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
 
-  const { code, error } = useMemo(
-    () => generatePine(nodes as BuilderNode[], edges, strategyTitle),
-    [nodes, edges, strategyTitle],
-  )
+// The Pine Script the blocks turn into, always up to date with the canvas.
+export function CodePanel({ gen }: { gen: GenResult }) {
+  const t = useT()
+  const title = useBuilder((s) => s.title)
+  const [copied, setCopied] = useState(false)
+  const code = gen.code
 
-  const onCopy = () => navigator.clipboard?.writeText(code)
+  const onCopy = async () => {
+    if (!(await copyText(code))) return
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1800)
+  }
 
-  const onExport = () => {
-    if (!code) return
-    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
+  const onDownload = () => {
+    const url = URL.createObjectURL(new Blob([code], { type: 'text/plain;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
-    const safe = (strategyTitle || 'strategy').replace(/[^a-z0-9_-]+/gi, '_')
-    a.download = `${safe}.pine`
+    a.download = `${strategySlug(title)}.pine`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -32,29 +38,15 @@ export function CodePanel() {
   return (
     <section className="code-panel">
       <div className="panel-head">
-        <h3>Pine Script v6</h3>
+        <h3>{t('code.title')}</h3>
         <div className="head-actions">
-          <button onClick={onCopy} disabled={!code}>Copiar</button>
-          <button onClick={onExport} disabled={!code} className="primary">↓ .pine</button>
+          <button type="button" onClick={onDownload} disabled={!code}>{t('code.download')}</button>
+          <button type="button" className="primary" onClick={onCopy} disabled={!code}>
+            {copied ? t('code.copied') : t('code.copy')}
+          </button>
         </div>
       </div>
-
-      {error && <div className="notice warn">{error}</div>}
-      {!error && !code && (
-        <div className="notice">Añade bloques y conecta un <b>Plot</b> para ver el código.</div>
-      )}
-
-      <pre className="code-block">{code || '// — sin código —'}</pre>
-
-      {runResult && !runResult.ok && (
-        <div className="notice error">⚠ {runResult.error}</div>
-      )}
-      {runResult && runResult.ok && (
-        <div className="notice ok">
-          ✓ Ejecutado sobre {runResult.barCount} velas · {runResult.plots.length} plot(s)
-          {runResult.isStrategy && ` · ${runResult.markers.length} señales`}
-        </div>
-      )}
+      <pre className="code-block" tabIndex={0}>{code || t('code.empty')}</pre>
     </section>
   )
 }
