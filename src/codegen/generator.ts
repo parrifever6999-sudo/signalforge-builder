@@ -29,7 +29,12 @@ type Built = Map<string, Val>
 
 type AlertAction = 'buy' | 'sell' | 'closebuy' | 'closesell'
 
-const ident = (id: string) => id.replace(/[^a-zA-Z0-9]/g, '_')
+// Two blocks must never end up with the same name: TradingView refuses a
+// script that declares a name twice. An output or a helper line is joined to
+// its block with one "_" ("v_a" + "_upper"), so inside the id every "_" is
+// doubled and any other sign becomes "_0". No id can then spell another
+// block's "id_output". The ids the app gives (n1, n2...) stay as they are.
+const ident = (id: string) => id.replace(/[^a-zA-Z0-9]/g, (ch) => (ch === '_' ? '__' : '_0'))
 const varName = (id: string) => 'v_' + ident(id)
 const condName = (id: string) => 'c_' + ident(id)
 

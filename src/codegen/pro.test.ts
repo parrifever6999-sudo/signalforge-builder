@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { generatePine, MAX_LEVERAGE } from './generator'
 import { runPine } from '../engine/pineRunner'
 import {
-  act, cond, edge, emaCrossGraph, entriesOnly, hourlyCandles, ind, node, plot, runWith, runs, settings, undeclared,
+  act, cond, edge, emaCrossGraph, entriesOnly, hourlyCandles, ind, node, plot, redeclared, runWith, runs, settings,
+  undeclared,
 } from './testkit'
+import { INDICATORS } from '../blocks/definitions'
+import type { IndicatorKind } from '../types'
 
 const HOUR = 3600000
 const noExits = { stopKind: 'none', targetKind: 'none' } as const
@@ -598,5 +601,108 @@ describe('trade management: what the engine does with it', () => {
     expect(result.trades.length).toBeGreaterThan(5)
     expect(result.trades.some((t) => t.side === 'short')).toBe(true)
     expect(Math.max(...result.trades.map((t) => t.exitIndex - t.entryIndex))).toBeLessThanOrEqual(40)
+  })
+})
+
+// TradingView refuses a script that declares a name twice. The names come from
+// the ids of the blocks, and a file or a link can carry any id.
+describe('every name in the script is declared once', () => {
+  const plotted = (ids: string[]) => ids.map((id) => plot(`p_${id}`, `Line ${id}`))
+
+  it('the helper tells a second declaration from an assignment', () => {
+    expect(redeclared('a = 1\nb = 2\nvar float c = na\nc := 3\nif a == b\n    d = 1')).toEqual([])
+    expect(redeclared('a = 1\na = 2')).toEqual(['a'])
+    expect(redeclared('[a, b] = f()\nb = 2')).toEqual(['b'])
+    expect(redeclared('var float a = na\nvar float a = na')).toEqual(['a'])
+  })
+
+  it('a block named like the output of another one', () => {
+    // "a" is a Bollinger block: its upper band would be v_a_upper, the same
+    // name a block called "a_upper" used to get.
+    const { code, error } = generatePine(
+      [
+        node('p', { kind: 'source', source: 'close' }),
+        ind('a', 'bb'), ind('a_upper', 'ema'), ind('a_basis', 'sma'),
+        ...plotted(['1', '2', '3']),
+      ],
+      [
+        edge('p', 'a'), edge('p', 'a_upper'), edge('p', 'a_basis'),
+        edge('a', 'p_1', null, 'upper'), edge('a_upper', 'p_2'), edge('a_basis', 'p_3'),
+      ],
+      'Names',
+    )
+    expect(error).toBeUndefined()
+    expect(redeclared(code)).toEqual([])
+    expect(undeclared(code)).toEqual([])
+  })
+
+  it('two blocks whose ids differ only by a hyphen or an underscore', () => {
+    const { code, error } = generatePine(
+      [
+        node('p', { kind: 'source', source: 'close' }),
+        ind('a-b', 'ema'), ind('a_b', 'sma'), ind('a__b', 'wma'), ind('a-_b', 'rsi'),
+        ...plotted(['1', '2', '3', '4']),
+      ],
+      [
+        edge('p', 'a-b'), edge('p', 'a_b'), edge('p', 'a__b'), edge('p', 'a-_b'),
+        edge('a-b', 'p_1'), edge('a_b', 'p_2'), edge('a__b', 'p_3'), edge('a-_b', 'p_4'),
+      ],
+      'Names',
+    )
+    expect(error).toBeUndefined()
+    expect(redeclared(code)).toEqual([])
+    expect(undeclared(code)).toEqual([])
+  })
+
+  it('a condition named like the helper line of another one', () => {
+    // The hours filter keeps the hour in c_<id>_h.
+    const { code, error } = generatePine(
+      [
+        node('p', { kind: 'source', source: 'close' }), ind('e', 'ema'),
+        cond('s', 'session', { from: 8, to: 17, tz: 'UTC' }), cond('s_h', 'gt'), cond('both', 'and'),
+        act('buy', 'entry_long'),
+      ],
+      [
+        edge('p', 'e'), edge('p', 's_h', 'a'), edge('e', 's_h', 'b'),
+        edge('s', 'both', 'a'), edge('s_h', 'both', 'b'), edge('both', 'buy'),
+      ],
+      'Names', settings(noExits),
+    )
+    expect(error).toBeUndefined()
+    expect(redeclared(code)).toEqual([])
+    expect(undeclared(code)).toEqual([])
+  })
+
+  it('every block at once, old ones included', async () => {
+    const kinds = Object.keys(INDICATORS) as IndicatorKind[]
+    const outs = kinds.flatMap((k) => INDICATORS[k].outputs.map((o) => ({ k, key: o.key })))
+    const { code, error } = generatePine(
+      [
+        node('p', { kind: 'source', source: 'close' }),
+        ...kinds.map((k) => ind(`i_${k}`, k)),
+        ...outs.map((o) => plot(`pl_${o.k}_${o.key || 'x'}`, `L ${o.k} ${o.key}`.trim())),
+      ],
+      [
+        ...kinds.filter((k) => INDICATORS[k].usesSource).map((k) => edge('p', `i_${k}`)),
+        ...outs.map((o) => edge(`i_${o.k}`, `pl_${o.k}_${o.key || 'x'}`, null, o.key || null)),
+      ],
+      'Every block',
+    )
+    expect(error).toBeUndefined()
+    expect(redeclared(code)).toEqual([])
+    expect(undeclared(code)).toEqual([])
+    // and it still runs
+    const result = await runPine(code, hourlyCandles(600), [], { timeframe: '60' })
+    expect(result.error).toBeUndefined()
+  })
+
+  it('the ids the app gives keep the names they had', () => {
+    const { code } = generatePine(
+      [node('n1', { kind: 'source', source: 'close' }), ind('n2', 'bb'), plot('n3', 'Upper')],
+      [edge('n1', 'n2'), edge('n2', 'n3', null, 'upper')],
+      'Names',
+    )
+    expect(code).toContain('[v_n2_basis, v_n2_upper, v_n2_lower] = ta.bb(close, 20, 2)')
+    expect(code).toContain('plot(v_n2_upper, "Upper"')
   })
 })

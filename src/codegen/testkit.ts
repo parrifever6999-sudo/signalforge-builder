@@ -129,6 +129,22 @@ export function rsiGraph() {
   return { nodes, edges }
 }
 
+// Names the script declares more than once. TradingView stops at the second
+// one ("already defined"); the engine that runs in the browser does not mind.
+export function redeclared(code: string): string[] {
+  const seen = new Set<string>()
+  const twice: string[] = []
+  const declare = (name: string) => { if (seen.has(name)) twice.push(name); else seen.add(name) }
+  for (const line of code.split('\n')) {
+    // name = ..., var float name = ...   (":=" assigns again, "==" compares)
+    const one = /^\s*(?:var(?:ip)?\s+\w+\s+)?(\w+)\s*=(?!=)/.exec(line)
+    const tuple = /^\s*\[([^\]]+)\]\s*=/.exec(line)
+    if (one) declare(one[1])
+    if (tuple) for (const name of tuple[1].split(',')) declare(name.trim())
+  }
+  return twice
+}
+
 // Every identifier the script uses as v_x / c_x must have been assigned first.
 export function undeclared(code: string): string[] {
   const declared = new Set<string>()
