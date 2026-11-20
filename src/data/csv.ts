@@ -1,6 +1,6 @@
 import type { Candle } from '../types'
 
-// Reads a price history exported as text: MetaTrader 5 (History > Export),
+// Reads a price history exported as text: MetaTrader 5 (View > Symbols > Bars),
 // MetaTrader 4, TradingView (Export chart data) or any CSV with date, open,
 // high, low and close columns. Everything happens in the browser; the file is
 // never sent anywhere.

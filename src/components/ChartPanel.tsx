@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useBuilder } from '../store/builderStore'
 import { useT } from '../i18n'
 import { localeOf } from '../lang'
-import { marketOf } from '../data/market'
+import { marketName, marketOf } from '../data/market'
 import { timeframeLabel } from '../data/csv'
 import { holdoutCut } from '../engine/robustness'
+import { BrokerCandles } from './BrokerCandles'
 import type { Candle, PlotResult, SignalMarker } from '../types'
 
 const STEPS = [1, 2, 3, 4, 6, 9, 12] // pixels per candle, from far to close
@@ -97,7 +98,7 @@ export function ChartPanel() {
   const found = marketOf(market)
   const heading =
     dataState === 'loading' ? t('chart.loading')
-    : dataState === 'live' ? t('chart.title', { market: found?.label ?? market, tf: timeframe, bars: candles.length })
+    : dataState === 'live' ? t('chart.title', { market: found ? marketName(found, t) : market, tf: timeframe, bars: candles.length })
     : dataState === 'custom' ? t('chart.title', { market: custom?.name ?? 'CSV', tf: timeframeLabel(candlesTf), bars: candles.length })
     : t('chart.sample', { bars: candles.length })
 
@@ -150,8 +151,13 @@ export function ChartPanel() {
         />
       )}
 
-      {dataState === 'live' && <p className="fine">{t(`chart.source.${found?.venue ?? 'spot'}`)}</p>}
+      {dataState === 'live' && (
+        <p className="fine">
+          {found?.like ? t('chart.source.proxy', { key: found.key, like: found.like }) : t('chart.source.spot')}
+        </p>
+      )}
       {dataState === 'custom' && <p className="fine">{t('chart.source.custom')}</p>}
+      {dataState !== 'custom' && <BrokerCandles />}
     </section>
   )
 }

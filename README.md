@@ -37,9 +37,12 @@ whether the script can be copied (with your pass, if you have one).
   percent of the balance you lose if the stop is hit.
 - Charge what trading costs: commission and slippage per side.
 - Pick the market and how far back to look: 1,000 to 10,000 candles of crypto,
-  gold, silver, oil, index and share contracts, from 5 minutes to daily.
+  gold, silver, oil, index and share contracts, from 5 minutes to daily. The
+  menu says which ones are Binance stand-ins and the broker symbol each one
+  follows, e.g. "Gold (Binance XAUUSDT, similar to XAUUSD)".
 - Or bring your own candles: import a CSV exported from MetaTrader or
-  TradingView and test on your broker's prices.
+  TradingView and test on your broker's prices. The steps for both are under
+  the chart.
 - See the result straight away: candles, your lines, entry and exit markers,
   the balance curve against buy and hold, net result, profit factor, win rate,
   drawdown, streaks.
@@ -84,7 +87,7 @@ blocks on the canvas -> Pine Script v6 -> run in the browser -> chart and figure
    exchange cannot be reached, a built-in sample series stands in and the app
    says so.
 4. `src/data/csv.ts` reads a file of your own instead: MetaTrader 4 and 5
-   exports, TradingView exports, commas, semicolons or tabs, UTF-8 or UTF-16.
+   exports (MT5: View > Symbols > Bars > Export Bars), TradingView exports, commas, semicolons or tabs, UTF-8 or UTF-16.
    The file is read in your browser and never uploaded.
 5. `src/engine/robustness.ts` works out the balance curve, the two halves of
    the out-of-sample test and the Monte Carlo runs from the list of trades.

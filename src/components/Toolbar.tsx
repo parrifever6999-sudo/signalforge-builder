@@ -4,7 +4,7 @@ import { useT } from '../i18n'
 import { LANGS, localeOf } from '../lang'
 import type { Lang } from '../lang'
 import {
-  CUSTOM_MARKET, DEPTHS, MARKETS, MARKET_GROUPS, SAMPLE_MARKET, TIMEFRAMES,
+  CUSTOM_MARKET, DEPTHS, MARKETS, MARKET_GROUPS, SAMPLE_MARKET, TIMEFRAMES, marketName,
 } from '../data/market'
 import type { Timeframe } from '../data/market'
 import { EXAMPLES } from '../store/examples'
@@ -12,9 +12,7 @@ import type { ExampleKey } from '../store/examples'
 import { sanitizeState } from '../store/graphIO'
 import { shareUrl } from '../store/boot'
 import { strategySlug } from '../codegen/generator'
-import { decodeText } from '../data/csv'
-
-const MAX_CSV_BYTES = 40 * 1024 * 1024
+import { CSV_ACCEPT, importCsvInput } from './csvImport'
 
 function download(name: string, text: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }))
@@ -70,18 +68,6 @@ export function Toolbar() {
     useBuilder.getState().applyState(state)
   }
 
-  const onCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (file.size > MAX_CSV_BYTES) {
-      window.alert(t('csv.tooBig'))
-      return
-    }
-    const error = useBuilder.getState().importCsv(file.name, decodeText(await file.arrayBuffer()))
-    if (error) window.alert(t(error))
-  }
-
   const onShare = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl())
@@ -104,10 +90,10 @@ export function Toolbar() {
         placeholder={t('toolbar.titlePlaceholder')} aria-label={t('toolbar.titlePlaceholder')}
       />
 
-      <select aria-label={t('toolbar.market')} value={market} onChange={(e) => setMarket(e.target.value)}>
+      <select className="market-select" aria-label={t('toolbar.market')} title={t('toolbar.marketHint')} value={market} onChange={(e) => setMarket(e.target.value)}>
         {MARKET_GROUPS.map((group) => (
           <optgroup key={group} label={t(`market.group.${group}`)}>
-            {MARKETS.filter((m) => m.group === group).map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+            {MARKETS.filter((m) => m.group === group).map((m) => <option key={m.key} value={m.key}>{marketName(m, t)}</option>)}
           </optgroup>
         ))}
         <optgroup label={t('market.group.other')}>
@@ -155,7 +141,7 @@ export function Toolbar() {
           {LANGS.map((l) => <option key={l} value={l}>{l.toUpperCase()}</option>)}
         </select>
         <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onOpen} />
-        <input ref={csvRef} type="file" accept=".csv,.txt,.tsv,text/csv,text/plain" hidden onChange={onCsv} />
+        <input ref={csvRef} type="file" accept={CSV_ACCEPT} hidden onChange={(e) => void importCsvInput(e, t)} />
       </div>
     </header>
   )

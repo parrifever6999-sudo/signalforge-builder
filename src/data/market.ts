@@ -1,4 +1,5 @@
 import type { Candle } from '../types'
+import type { Translate } from '../i18n'
 
 // Candles come from Binance's public market-data endpoints (no key, CORS open):
 // spot for crypto, and its perpetual futures for gold, silver, oil and the
@@ -19,30 +20,46 @@ export type MarketGroup = 'crypto' | 'commodities' | 'stocks' | 'fx'
 
 export interface Market {
   key: string
-  label: string
   venue: Venue
   group: MarketGroup
+  // Everything but crypto is a stand-in: a Binance contract or pair that moves
+  // with the market, not the market itself. "like" is the symbol a broker
+  // would use for it, so the menu can say what the user is really looking at.
+  like?: string
 }
 
+// The names are in the locales (market.name.<key>).
 export const MARKETS: Market[] = [
-  { key: 'BTCUSDT',  label: 'Bitcoin (BTCUSDT)',  venue: 'spot', group: 'crypto' },
-  { key: 'ETHUSDT',  label: 'Ethereum (ETHUSDT)', venue: 'spot', group: 'crypto' },
-  { key: 'SOLUSDT',  label: 'Solana (SOLUSDT)',   venue: 'spot', group: 'crypto' },
-  { key: 'XRPUSDT',  label: 'XRP (XRPUSDT)',      venue: 'spot', group: 'crypto' },
-  { key: 'BNBUSDT',  label: 'BNB (BNBUSDT)',      venue: 'spot', group: 'crypto' },
+  { key: 'BTCUSDT',  venue: 'spot', group: 'crypto' },
+  { key: 'ETHUSDT',  venue: 'spot', group: 'crypto' },
+  { key: 'SOLUSDT',  venue: 'spot', group: 'crypto' },
+  { key: 'XRPUSDT',  venue: 'spot', group: 'crypto' },
+  { key: 'BNBUSDT',  venue: 'spot', group: 'crypto' },
 
-  { key: 'XAUUSDT',  label: 'Gold (XAUUSDT)',          venue: 'futures', group: 'commodities' },
-  { key: 'XAGUSDT',  label: 'Silver (XAGUSDT)',        venue: 'futures', group: 'commodities' },
-  { key: 'CLUSDT',   label: 'Crude oil WTI (CLUSDT)',  venue: 'futures', group: 'commodities' },
-  { key: 'PAXGUSDT', label: 'Gold token (PAXGUSDT)',   venue: 'spot',    group: 'commodities' },
+  { key: 'XAUUSDT',  venue: 'futures', group: 'commodities', like: 'XAUUSD' },
+  { key: 'XAGUSDT',  venue: 'futures', group: 'commodities', like: 'XAGUSD' },
+  { key: 'CLUSDT',   venue: 'futures', group: 'commodities', like: 'USOIL' },
+  { key: 'PAXGUSDT', venue: 'spot',    group: 'commodities', like: 'XAUUSD' },
 
-  { key: 'SPYUSDT',  label: 'S&P 500 (SPYUSDT)',    venue: 'futures', group: 'stocks' },
-  { key: 'QQQUSDT',  label: 'Nasdaq 100 (QQQUSDT)', venue: 'futures', group: 'stocks' },
-  { key: 'NVDAUSDT', label: 'Nvidia (NVDAUSDT)',    venue: 'futures', group: 'stocks' },
-  { key: 'TSLAUSDT', label: 'Tesla (TSLAUSDT)',     venue: 'futures', group: 'stocks' },
+  { key: 'SPYUSDT',  venue: 'futures', group: 'stocks', like: 'US500' },
+  { key: 'QQQUSDT',  venue: 'futures', group: 'stocks', like: 'US100' },
+  { key: 'NVDAUSDT', venue: 'futures', group: 'stocks', like: 'NVDA' },
+  { key: 'TSLAUSDT', venue: 'futures', group: 'stocks', like: 'TSLA' },
 
-  { key: 'EURUSDT',  label: 'Euro (EURUSDT)', venue: 'spot', group: 'fx' },
+  { key: 'EURUSDT',  venue: 'spot', group: 'fx', like: 'EURUSD' },
 ]
+
+/**
+ * What the menu and the chart call a market. A stand-in says so, e.g.
+ * "Gold (Binance XAUUSDT, similar to XAUUSD)": nobody should take Binance's
+ * euro pair for their broker's EURUSD.
+ */
+export function marketName(m: Market, t: Translate): string {
+  const name = t(`market.name.${m.key}`)
+  return m.like
+    ? t('market.proxy', { name, key: m.key, like: m.like })
+    : t('market.crypto', { name, key: m.key })
+}
 
 export const MARKET_GROUPS: MarketGroup[] = ['crypto', 'commodities', 'stocks', 'fx']
 

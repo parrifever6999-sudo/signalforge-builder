@@ -215,6 +215,22 @@ button.link {
 .notice.warn { background: rgba(245, 185, 66, 0.1); border-color: rgba(245, 185, 66, 0.35); color: #f7d58a; }
 .notice.error { background: rgba(229, 72, 77, 0.1); border-color: rgba(229, 72, 77, 0.4); color: #ffb1b4; }
 
+/* ---- Your broker's candles: a link under the chart that opens over it ---- */
+.chart-panel { position: relative; }
+.broker-guide { margin-top: 6px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); flex-shrink: 0; }
+.broker-guide summary { cursor: pointer; color: var(--lime); font-weight: 600; }
+.broker-body {
+  position: absolute; left: 10px; right: 10px; bottom: 36px; max-height: calc(100% - 48px); overflow: auto; z-index: 5;
+  padding: 4px 12px 12px; background: rgba(17, 19, 18, 0.98); border: 1px solid var(--line-2); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.broker-guide p { margin: 8px 0 0; }
+.broker-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 18px; }
+.broker-steps h4 { margin: 10px 0 2px; font-size: 12.5px; color: var(--ink); }
+.broker-steps ol { margin: 0; padding-left: 18px; }
+.broker-steps li { margin: 2px 0; }
+.broker-guide button { margin-top: 10px; }
+
 /* ---- Stats ---- */
 .pill {
   font-size: 11px; background: var(--lime-soft); color: var(--lime);
