@@ -51,20 +51,28 @@ export function boot(): void {
 
   // Keep the work in this browser, so a reload or a return visit finds it.
   let timer: ReturnType<typeof setTimeout> | undefined
-  let last = ''
-  useBuilder.subscribe((s) => {
+  useBuilder.subscribe(() => {
     clearTimeout(timer)
-    timer = setTimeout(() => {
-      const text = JSON.stringify({ ...s.snapshot(), lang: s.lang })
-      if (text === last) return
-      last = text
-      try {
-        localStorage.setItem(STORAGE_KEY, text)
-      } catch {
-        // Storage full or blocked: the session still works, it just is not kept.
-      }
-    }, 500)
+    timer = setTimeout(saveNow, 500)
   })
+}
+
+let lastSaved = ''
+
+/**
+ * Writes the canvas to this browser straight away, without waiting for the
+ * pause after the last edit: for links that leave the page in the same tab.
+ */
+export function saveNow(): void {
+  const s = useBuilder.getState()
+  const text = JSON.stringify({ ...s.snapshot(), lang: s.lang })
+  if (text === lastSaved) return
+  lastSaved = text
+  try {
+    localStorage.setItem(STORAGE_KEY, text)
+  } catch {
+    // Storage full or blocked: the session still works, it just is not kept.
+  }
 }
 
 export function shareUrl(): string {

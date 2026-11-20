@@ -22,6 +22,15 @@ export function loginUrl(lang: Lang): string {
   return `${DASHBOARD_URL}login?lang=${lang}`
 }
 
+// The dashboard page that checks the plan and sends the browser back here
+// with a pass in the part of the address after #.
+export const UNLOCK_URL = `${DASHBOARD_URL}builder?open=1`
+
+// The plans of the site, in the language of the app.
+export function pricingUrl(lang: Lang): string {
+  return siteUrl(lang, lang === 'es' ? 'precios/' : 'pricing/')
+}
+
 // The same menu as the header of the site.
 export function navLinks(lang: Lang): { key: string; href: string }[] {
   return [
