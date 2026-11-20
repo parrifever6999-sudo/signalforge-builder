@@ -232,8 +232,13 @@ the percent it was told to.
 PineTS, is AGPL, so this app is too. If you run a modified version for other
 people, you have to offer them its source.
 
-The licence covers the code. The SignalForge name and logo are not part of it:
-if you publish your own version, give it your own name.
+The licence covers the code. The SignalForge AI name and logo are trademarks of
+SignalForge AI and are not part of it: if you publish your own version, give it
+your own name and take out the logo (`src/assets/signalforge-brand-icon-72.png`),
+the header links to the SignalForge AI site and the profiles in the footer.
+
+The fonts are Bricolage Grotesque and JetBrains Mono, under the SIL Open Font
+License 1.1; their licences are in `src/assets/fonts`.
 
 ## Credits
 

@@ -12,7 +12,6 @@ import type { ExampleKey } from '../store/examples'
 import { sanitizeState } from '../store/graphIO'
 import { shareUrl } from '../store/boot'
 import { strategySlug } from '../codegen/generator'
-import { SITE_URL } from '../links'
 import { decodeText } from '../data/csv'
 
 const MAX_CSV_BYTES = 40 * 1024 * 1024
@@ -99,12 +98,6 @@ export function Toolbar() {
 
   return (
     <header className="toolbar">
-      <a className="brand" href={SITE_URL} target="_blank" rel="noopener">
-        <span className="brand-mark" aria-hidden="true" />
-        <span>SignalForge<span className="ai-mark">AI</span></span>
-        <span className="tag">{t('app.name')}</span>
-      </a>
-
       <input
         className="title-input" value={title} maxLength={80}
         onChange={(e) => setTitle(e.target.value)}

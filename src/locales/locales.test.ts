@@ -9,6 +9,7 @@ import {
 } from '../blocks/definitions'
 import { EXAMPLES } from '../store/examples'
 import { MARKET_GROUPS } from '../data/market'
+import { navLinks } from '../links'
 
 const SRC = join(__dirname, '..')
 
@@ -70,6 +71,7 @@ describe('locales', () => {
     for (const v of ['spot', 'futures']) used.add(`chart.source.${v}`)
     for (const v of ['few', 'both', 'faded', 'late', 'neither']) used.add(`rob.verdict.${v}`)
     for (const e of ['csv.empty', 'csv.columns', 'csv.few']) used.add(e)
+    for (const l of navLinks('en')) used.add(l.key)
 
     expect(used.size).toBeGreaterThan(100)
     const missing = [...used].filter((k) => !(k in en))

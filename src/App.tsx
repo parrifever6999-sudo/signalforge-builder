@@ -9,6 +9,7 @@ import { canConnect } from './store/connect'
 import { generatePine } from './codegen/generator'
 import { nodeTypes } from './nodes/CustomNodes'
 import { Sidebar, DRAG_TYPE } from './components/Sidebar'
+import { SiteNav } from './components/SiteNav'
 import { Toolbar } from './components/Toolbar'
 import { CodePanel } from './components/CodePanel'
 import { ChartPanel } from './components/ChartPanel'
@@ -71,6 +72,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <SiteNav />
       <Toolbar />
       <div className="workspace">
         <Sidebar />

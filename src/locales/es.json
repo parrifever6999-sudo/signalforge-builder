@@ -1,6 +1,11 @@
 {
   "app.name": "Strategy Builder",
   "app.tagline": "Monta una estrategia de TradingView con bloques, pru\u00e9bala y env\u00edala a MT5.",
+  "nav.docs": "Docs",
+  "nav.pricing": "Precios",
+  "nav.blog": "Blog",
+  "nav.login": "Iniciar sesi\u00f3n",
+  "nav.start": "Empieza gratis \u2192",
   "toolbar.titlePlaceholder": "Nombre de la estrategia",
   "toolbar.examples": "Ejemplos",
   "toolbar.example.ema": "Cruce de EMAs (tendencia)",
@@ -420,5 +425,6 @@
   "footer.source": "C\u00f3digo fuente (AGPL-3.0)",
   "footer.engine": "Funciona con PineTS y React Flow.",
   "footer.disclaimer": "Sin relaci\u00f3n con TradingView; Pine Script es una marca de TradingView. Un backtest ense\u00f1a el pasado, no lo que va a pasar. Operar conlleva riesgo.",
-  "footer.by": "Hecho por SignalForge AI"
+  "footer.by": "Hecho por SignalForge AI",
+  "footer.trademark": "SignalForge AI y su logo son marcas de SignalForge AI. La licencia AGPL cubre el c\u00f3digo, no el nombre ni el logo."
 }

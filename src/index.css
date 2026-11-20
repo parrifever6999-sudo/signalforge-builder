@@ -1,3 +1,13 @@
+/* The fonts of the SignalForge AI site (SIL Open Font License 1.1, licences in assets/fonts). */
+@font-face {
+  font-family: 'Bricolage Grotesque SF'; font-style: normal; font-weight: 500 700; font-display: swap;
+  src: url('./assets/fonts/bricolage-grotesque.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono.woff2') format('woff2');
+}
+
 :root {
   --bg: #08090a;
   --bg-2: #0c0e0d;
@@ -14,7 +24,8 @@
   --up: #3fb68b;
   --down: #e5484d;
   --warn: #f5b942;
-  --mono: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  --display: 'Bricolage Grotesque SF', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color-scheme: dark;
 }
@@ -51,15 +62,30 @@ button.link {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 9px 14px; background: var(--bg-2); border-bottom: 1px solid var(--line);
 }
+
+/* ---- Header of the SignalForge AI site ---- */
+.site-nav {
+  display: flex; align-items: center; gap: 14px; height: 60px; padding: 0 16px;
+  background: rgba(8, 9, 10, 0.92); border-bottom: 1px solid var(--line);
+}
 .brand {
-  display: flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none;
-  font-weight: 700; letter-spacing: -0.01em; margin-right: 4px;
+  display: inline-flex; align-items: center; gap: 12px; color: var(--ink); text-decoration: none;
+  font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: -0.015em;
 }
-.brand-mark {
-  width: 18px; height: 18px; border-radius: 5px; background: var(--lime);
-  box-shadow: 0 0 14px rgba(196, 255, 52, 0.35); transform: rotate(45deg) scale(0.8);
+.brand-icon { display: block; width: 36px; height: 36px; flex-shrink: 0; }
+.ai-mark { color: var(--lime); font-weight: 500; margin-left: 6px; letter-spacing: -0.01em; }
+.site-links { display: flex; gap: 22px; margin-left: 12px; font-size: 13.5px; font-weight: 500; }
+.site-links a { color: var(--ink-2); text-decoration: none; transition: color 0.15s; }
+.site-links a:hover { color: var(--ink); }
+.site-cta { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.nav-pill {
+  display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border-radius: 999px;
+  font-weight: 500; font-size: 13px; line-height: 1; border: 1px solid var(--line-2); color: var(--ink);
+  text-decoration: none; white-space: nowrap; transition: all 0.15s ease;
 }
-.ai-mark { color: var(--lime); margin-left: 3px; }
+.nav-pill:hover { border-color: var(--ink-3); }
+.nav-pill.primary { background: var(--lime); border-color: var(--lime); color: #08090a; font-weight: 600; }
+.nav-pill.primary:hover { box-shadow: 0 0 32px rgba(196, 255, 52, 0.35); transform: translateY(-1px); }
 .tag {
   font-size: 11px; font-weight: 600; color: var(--lime); background: var(--lime-soft);
   padding: 2px 8px; border-radius: 999px;
@@ -114,6 +140,7 @@ button.link {
 .panel-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
 }
+.panel-head h3, .sidebar h2 { font-family: var(--display); letter-spacing: -0.01em; }
 .panel-head h3 {
   margin: 0; font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
 }
@@ -224,6 +251,13 @@ button.link {
 
 .app-footer { font-size: 11.5px; line-height: 1.5; color: var(--ink-3); padding: 4px 4px 10px; }
 .app-footer p { margin: 0 0 6px; }
+.foot-socials { display: flex; gap: 8px; margin: 2px 0 10px; }
+.foot-socials a {
+  width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--line-2);
+  display: grid; place-items: center; transition: border-color 0.15s;
+}
+.foot-socials a:hover { border-color: var(--lime); }
+.foot-socials svg { width: 14px; height: 14px; fill: var(--ink-2); }
 
 /* ---- Blocks on the canvas ---- */
 .block-node {
@@ -263,6 +297,13 @@ button.link {
 .react-flow__attribution { background: transparent; }
 
 /* ---- Narrow screens: stack everything ---- */
+@media (max-width: 900px) {
+  .site-links { display: none; }
+}
+@media (max-width: 560px) {
+  .site-nav .tag, .site-cta .nav-pill:not(.primary) { display: none; }
+  .brand { font-size: 16px; gap: 9px; }
+}
 @media (max-width: 1100px) {
   .app { height: auto; min-height: 100vh; }
   .workspace { flex-direction: column; }
