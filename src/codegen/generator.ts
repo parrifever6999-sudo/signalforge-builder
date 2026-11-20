@@ -77,11 +77,27 @@ export function cleanSymbol(s: string): string {
   return (s ?? '').trim().replace(/[^A-Za-z0-9._#+-]/g, '').slice(0, 24)
 }
 
-// Pine string expression that evaluates to the JSON SignalForge expects.
-function alertJson(action: AlertAction, symbol: string, slug: string): string {
-  const sym = symbol ? `"symbol":"${symbol}"` : `"symbol":"' + syminfo.ticker + '"`
+// An MT5 login, or the name the account has in SignalForge (SignalForge
+// matches either). Only what both can hold and nothing that breaks the JSON
+// or the Pine string around it.
+// While typing, spaces are left alone so a name with spaces can be typed; the
+// script and saved strategies always get the trimmed form.
+export function cleanAccount(s: string, typing = false): string {
+  const kept = String(s ?? '').replace(/[^A-Za-z0-9 ._#+-]/g, '')
+  return (typing ? kept : kept.replace(/ +/g, ' ').trim()).slice(0, 32)
+}
+
+// Where every message goes: the symbol ('' = the chart's), the strategy name
+// and, if set, the one MT5 account that should receive it.
+interface AlertDest { symbol: string; slug: string; account: string }
+
+// Pine string expression that evaluates to the JSON SignalForge expects. The
+// account goes in closes too: without it a close would reach every account.
+function alertJson(action: AlertAction, to: AlertDest): string {
+  const sym = to.symbol ? `"symbol":"${to.symbol}"` : `"symbol":"' + syminfo.ticker + '"`
   const lot = action === 'buy' || action === 'sell' ? `,"lot":"' + str.tostring(lotSize) + '"` : ''
-  return `'{"action":"${action}",${sym}${lot},"strategy":"${slug}"}'`
+  const account = to.account ? `,"account":"${to.account}"` : ''
+  return `'{"action":"${action}",${sym}${lot}${account},"strategy":"${to.slug}"}'`
 }
 
 const positive = (n: number, fallback: number) => {
@@ -342,6 +358,8 @@ export function generatePine(
 
   const slug = strategySlug(title)
   const symbol = cleanSymbol(st.symbol)
+  const account = cleanAccount(st.account)
+  const dest: AlertDest = { symbol, slug, account }
   const hasLong = actions.some((a) => a.action === 'entry_long')
   const hasShort = actions.some((a) => a.action === 'entry_short')
   const hasEntry = hasLong || hasShort
@@ -394,6 +412,7 @@ export function generatePine(
     // account in SignalForge, that size wins over the one in the alert.
     '// Lot sent with every entry. SignalForge trades it when the position size of the account is "From the signal"',
     `lotSize = input.float(${fmtNum(Math.max(0.01, positive(st.lot, 0.1)))}, "Lot size (MT5)", minval=0.01, step=0.01)`,
+    ...(account ? [`// Every alert names MT5 account ${account}: SignalForge sends it there and nowhere else`] : []),
     '',
     ...calc,
   )
@@ -424,18 +443,18 @@ export function generatePine(
       if (useBe) out.push(`    sfBeDist := ${beExpr}`)
       out.push(
         long
-          ? `    strategy.entry("Long", strategy.long${qty}, alert_message=${alertJson('buy', symbol, slug)})`
-          : `    strategy.entry("Short", strategy.short${qty}, alert_message=${alertJson('sell', symbol, slug)})`,
+          ? `    strategy.entry("Long", strategy.long${qty}, alert_message=${alertJson('buy', dest)})`
+          : `    strategy.entry("Short", strategy.short${qty}, alert_message=${alertJson('sell', dest)})`,
       )
     } else if (a.action === 'exit_long') {
       out.push(
         `if ${a.cond} and strategy.position_size > 0`,
-        `    strategy.close("Long", alert_message=${alertJson('closebuy', symbol, slug)})`,
+        `    strategy.close("Long", alert_message=${alertJson('closebuy', dest)})`,
       )
     } else {
       out.push(
         `if ${a.cond} and strategy.position_size < 0`,
-        `    strategy.close("Short", alert_message=${alertJson('closesell', symbol, slug)})`,
+        `    strategy.close("Short", alert_message=${alertJson('closesell', dest)})`,
       )
     }
   }
@@ -444,7 +463,7 @@ export function generatePine(
   const exitCall = (long: boolean, stop: string) =>
     `    strategy.exit("${long ? 'XL' : 'XS'}", from_entry="${long ? 'Long' : 'Short'}", ` +
     [stop, useTarget ? `limit=${avg} ${long ? '+' : '-'} sfTakeDist` : ''].filter(Boolean).join(', ') +
-    `, alert_message=${alertJson(long ? 'closebuy' : 'closesell', symbol, slug)})`
+    `, alert_message=${alertJson(long ? 'closebuy' : 'closesell', dest)})`
 
   if (moving) {
     // The stop lives in sfStop: it starts at the fixed stop (if any), jumps to
@@ -490,13 +509,13 @@ export function generatePine(
     if (hasLong) {
       out.push(
         `if strategy.position_size > 0 and sfBars >= ${maxBars}`,
-        `    strategy.close("Long", alert_message=${alertJson('closebuy', symbol, slug)})`,
+        `    strategy.close("Long", alert_message=${alertJson('closebuy', dest)})`,
       )
     }
     if (hasShort) {
       out.push(
         `if strategy.position_size < 0 and sfBars >= ${maxBars}`,
-        `    strategy.close("Short", alert_message=${alertJson('closesell', symbol, slug)})`,
+        `    strategy.close("Short", alert_message=${alertJson('closesell', dest)})`,
       )
     }
   }

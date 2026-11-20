@@ -103,8 +103,9 @@ export type BreakevenKind = 'none' | 'percent' | 'atr' | 'rr'
 export type SizeKind = 'equity' | 'risk'
 
 export interface StrategySettings {
-  lot: number          // lot size sent to MT5 with every entry
+  lot: number          // lot in every entry alert (traded only if the account takes it from the signal)
   symbol: string       // '' = use the chart symbol (syminfo.ticker)
+  account: string      // '' = every connected MT5 account; else an MT5 login or a SignalForge account name
   stopKind: StopKind
   stopValue: number    // percent of price, or ATR multiple
   targetKind: TargetKind
@@ -123,6 +124,7 @@ export interface StrategySettings {
 export const DEFAULT_SETTINGS: StrategySettings = {
   lot: 0.1,
   symbol: '',
+  account: '',
   stopKind: 'atr',
   stopValue: 1.5,
   targetKind: 'rr',

@@ -177,9 +177,12 @@ Two things SignalForge decides, not the script:
 - The lot. SignalForge trades the lot in the message only when the account's
   position size is set to "From the signal". With a fixed lot or a percentage
   of risk, the size set in SignalForge is the one traded.
-- The account. The message names none, so SignalForge sends it to every
-  MetaTrader 5 account you have connected, except those set to take only
-  signals addressed to them.
+- The account. Unless you fill in "MT5 account" in the app, the message names
+  none and SignalForge sends it to every MetaTrader 5 account you have
+  connected, except those set to take only signals addressed to them. Filled
+  in (an MT5 login, or the name the account has in SignalForge), every message,
+  closes included, carries `"account"` and only that account receives it; if
+  it matches no connected account, nothing is placed.
 
 The stop, the target, the trailing stop, the break-even and the time exit are
 worked out by the strategy in TradingView, which sends a close message when one

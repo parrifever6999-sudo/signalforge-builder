@@ -1,6 +1,6 @@
 import { useBuilder } from '../store/builderStore'
 import { useT } from '../i18n'
-import { cleanSymbol } from '../codegen/generator'
+import { cleanAccount, cleanSymbol } from '../codegen/generator'
 import type { BreakevenKind, SizeKind, StopKind, TargetKind, TrailKind } from '../types'
 
 const STOPS: StopKind[] = ['none', 'atr', 'percent']
@@ -144,8 +144,17 @@ export function SettingsPanel() {
             onChange={(e) => set({ symbol: cleanSymbol(e.target.value) })}
           />
         </label>
+
+        <label className="field">
+          <span>{t('settings.account')}</span>
+          <input
+            type="text" maxLength={32} value={s.account} placeholder={t('settings.accountPlaceholder')}
+            onChange={(e) => set({ account: cleanAccount(e.target.value, true) })}
+          />
+        </label>
       </div>
       <p className="fine">{t('settings.symbolHint')}</p>
+      <p className="fine">{t('settings.accountHint')}</p>
     </section>
   )
 }

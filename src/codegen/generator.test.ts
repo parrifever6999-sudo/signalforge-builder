@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generatePine } from './generator'
+import { cleanAccount, generatePine } from './generator'
 import { runPine } from '../engine/pineRunner'
 import { generateCandles } from '../data/sampleData'
 import { node, edge, settings, emaCrossGraph, rsiGraph, undeclared, ind, plot, hourlyCandles } from './testkit'
@@ -68,6 +68,36 @@ describe('generatePine: SignalForge alerts', () => {
     const { code } = generatePine(nodes, edges, 'X')
     expect(code).toContain('SignalForge trades it when the position size of the account is "From the signal"')
     expect(code).not.toContain('reads it from the alert')
+  })
+
+  // Without "account" SignalForge sends the order to every connected MT5
+  // account. With it, entries AND closes must name it, or a close would still
+  // reach every account.
+  it('an account, when set, goes in every message, entries and closes alike', () => {
+    const { nodes, edges } = emaCrossGraph()
+    const { code } = generatePine(nodes, edges, 'X', settings({ account: ' 6720"9685 ' }))
+    const messages = code.split(String.fromCharCode(10)).filter((l) => l.includes('alert_message='))
+    expect(messages.some((l) => l.includes('strategy.entry('))).toBe(true)
+    expect(messages.some((l) => l.includes('strategy.close('))).toBe(true)
+    expect(messages.some((l) => l.includes('strategy.exit('))).toBe(true)
+    for (const l of messages) expect(l).toContain('"account":"67209685","strategy":"x"}')
+    expect(code).toContain('// Every alert names MT5 account 67209685')
+    const none = generatePine(nodes, edges, 'X').code
+    expect(none).not.toContain('"account"')
+    expect(none).not.toContain('names MT5 account')
+  })
+
+  it('an account keeps what a login or a SignalForge label can hold, and nothing that breaks the JSON', () => {
+    expect(cleanAccount('  67209685 ')).toBe('67209685')
+    expect(cleanAccount('My FTMO  #2')).toBe('My FTMO #2')
+    // Quote, backslash, apostrophe, braces and a line break: all of them dropped.
+    const [backslash, apostrophe, newline] = [92, 39, 10].map((c) => String.fromCharCode(c))
+    expect(cleanAccount('a"b' + backslash + 'c' + apostrophe + 'd}{' + newline)).toBe('abcd')
+    expect(cleanAccount('x'.repeat(50))).toHaveLength(32)
+    // While typing, a space at the end must stay or "My FTMO" cannot be typed.
+    expect(cleanAccount('My ', true)).toBe('My ')
+    expect(cleanAccount('My "F', true)).toBe('My F')
+    expect(cleanAccount(undefined as unknown as string)).toBe('')
   })
 
   it('a fixed symbol replaces syminfo.ticker and loses anything that could break the JSON', () => {

@@ -59,7 +59,7 @@ describe('sanitizeState', () => {
     expect(out.nodes[2].data).toEqual({ kind: 'value', value: 0 })
     expect(out.edges[0].targetHandle).toBeNull()
     expect(out.settings).toEqual({
-      lot: 0.01, symbol: 'XAUUSD', stopKind: 'atr', stopValue: 1.5, targetKind: 'rr', targetValue: 3,
+      lot: 0.01, symbol: 'XAUUSD', account: '', stopKind: 'atr', stopValue: 1.5, targetKind: 'rr', targetValue: 3,
       // what the file did not carry gets the defaults
       trailKind: 'none', trailValue: 2, beKind: 'none', beValue: 1, maxBars: 0,
       sizeKind: 'equity', sizeValue: 100, feePct: 0.05, slipPct: 0.02,
@@ -83,6 +83,12 @@ describe('sanitizeState', () => {
       trailKind: 'none', trailValue: 4, beKind: 'rr', beValue: 1000, maxBars: 13,
       sizeKind: 'equity', sizeValue: 0.01, feePct: 5, slipPct: 0.02,
     })
+  })
+
+  it('an account from a file or a link is cleaned like the one typed in', () => {
+    const { settings: st } = sanitizeState({ nodes: [], settings: { account: String.fromCharCode(39) + '67209685"}' } })!
+    expect(st.account).toBe('67209685')
+    expect(sanitizeState({ nodes: [], settings: { account: 42 } })!.settings.account).toBe('42')
   })
 
   it('a block keeps only the fields it has, each inside its limits', () => {

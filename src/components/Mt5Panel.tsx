@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useBuilder } from '../store/builderStore'
 import { useT } from '../i18n'
-import { fmtNum, strategySlug } from '../codegen/generator'
+import { cleanAccount, fmtNum, strategySlug } from '../codegen/generator'
 import type { GenResult } from '../codegen/generator'
 import { signupUrl } from '../links'
 import { copyText } from './CodePanel'
@@ -27,6 +27,7 @@ export function Mt5Panel({ gen }: { gen: GenResult }) {
     action: 'buy',
     symbol: settings.symbol || `(${t('mt5.chartSymbol')})`,
     lot: fmtNum(Math.max(0.01, settings.lot || 0.1)),
+    ...(cleanAccount(settings.account) ? { account: cleanAccount(settings.account) } : {}),
     strategy: strategySlug(title),
   })
   // Asked of the script rather than of the settings: a target in multiples of

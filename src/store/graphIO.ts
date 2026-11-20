@@ -8,7 +8,7 @@ import {
   ACTIONS, CONDITIONS, INDICATORS, PLOT_COLORS, PLOT_STYLES, SOURCES,
   DEFAULT_HTF, isHtf, isTimezone, paramValues,
 } from '../blocks/definitions'
-import { cleanSymbol } from '../codegen/generator'
+import { cleanAccount, cleanSymbol } from '../codegen/generator'
 import { isDepth, isMarket, isTimeframe } from '../data/market'
 import { edgeId, outputKeys } from './connect'
 
@@ -109,6 +109,7 @@ export function cleanSettings(raw: unknown): StrategySettings {
   return {
     lot: clamp(finite(r.lot, d.lot), 0.01, 1000),
     symbol: cleanSymbol(String(r.symbol ?? '')),
+    account: cleanAccount(String(r.account ?? '')),
     stopKind: oneOf<StopKind>(r.stopKind, ['none', 'percent', 'atr'], d.stopKind),
     stopValue: size(r.stopValue, d.stopValue),
     targetKind: oneOf<TargetKind>(r.targetKind, ['none', 'percent', 'atr', 'rr'], d.targetKind),
