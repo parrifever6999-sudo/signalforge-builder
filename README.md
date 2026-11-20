@@ -7,7 +7,7 @@ to place the orders on MetaTrader 5.
 
 Free, no account, nothing leaves your browser except the request for candles.
 
-**Open it:** https://parrifever6999-sudo.github.io/signalforge-builder/
+**Open it:** https://builder.signalforge-ai.com/ (in Spanish: https://builder.signalforge-ai.com/?lang=es)
 
 ## What you can do with it
 
