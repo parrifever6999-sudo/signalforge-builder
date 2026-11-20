@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseKlines, mergeCandles, fetchCandles, isMarket, isTimeframe, isDepth, marketOf, pineTimeframe,
-  MARKETS, MARKET_GROUPS, TIMEFRAMES, DEPTHS, DEFAULT_DEPTH, CUSTOM_MARKET,
+  MARKETS, MARKET_GROUPS, TIMEFRAMES, DEPTHS, DEFAULT_DEPTH, CUSTOM_MARKET, marketName,
 } from './market'
+import { translate } from '../i18n'
+import type { Translate } from '../i18n'
 
 const row = (t: number, o: string, h: string, l: string, c: string, closeTime = t + 3599999) =>
   [t, o, h, l, c, '12.5', closeTime, '0', 10, '0', '0', '0']
@@ -83,6 +85,28 @@ describe('market guards', () => {
     for (const g of MARKET_GROUPS) expect(MARKETS.some((m) => m.group === g)).toBe(true)
     expect(marketOf('XAUUSDT')?.venue).toBe('futures')
     expect(marketOf('nope')).toBeUndefined()
+  })
+
+  // "why XAUUSDT, EURUSDT?": everything but crypto is a Binance stand-in, and
+  // the menu has to say so instead of passing it off as the broker's market.
+  it('every stand-in says it is Binance and which broker symbol it follows', () => {
+    for (const m of MARKETS) {
+      if (m.group === 'crypto') {
+        expect(m.like, m.key).toBeUndefined()
+        continue
+      }
+      expect(m.like, m.key).toMatch(/^[A-Z0-9]{3,8}$/)
+      for (const lang of ['en', 'es'] as const) {
+        const text = marketName(m, (key, params) => translate(lang, key, params))
+        expect(text, `${lang} ${m.key}`).toContain(`Binance ${m.key}`)
+        expect(text, `${lang} ${m.key}`).toContain(m.like!)
+        expect(text, `${lang} ${m.key}`).not.toContain('market.name.')
+      }
+    }
+    const t: Translate = (key, params) => translate('es', key, params)
+    expect(marketName(marketOf('EURUSDT')!, t)).toBe('Euro (Binance EURUSDT, parecido a EURUSD)')
+    expect(marketName(marketOf('XAUUSDT')!, (k, p) => translate('en', k, p))).toBe('Gold (Binance XAUUSDT, similar to XAUUSD)')
+    expect(marketName(marketOf('BTCUSDT')!, t)).toBe('Bitcoin (BTCUSDT)')
   })
 
   it('timeframes have their Pine name and the default depth is one on offer', () => {

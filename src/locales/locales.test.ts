@@ -8,7 +8,7 @@ import {
   ACTIONS, CONDITIONS, HTF_TIMEFRAMES, INDICATORS, PALETTE, PALETTE_GROUPS, PLOT_COLORS, PLOT_STYLES, WEEKDAYS,
 } from '../blocks/definitions'
 import { EXAMPLES } from '../store/examples'
-import { MARKET_GROUPS } from '../data/market'
+import { MARKETS, MARKET_GROUPS } from '../data/market'
 import { navLinks } from '../links'
 
 const SRC = join(__dirname, '..')
@@ -68,7 +68,7 @@ describe('locales', () => {
     for (const tf of HTF_TIMEFRAMES) used.add(`tf.${tf}`)
     for (const d of WEEKDAYS) used.add(`day.${d}`).add(`day.${d}.long`)
     for (const g of MARKET_GROUPS) used.add(`market.group.${g}`)
-    for (const v of ['spot', 'futures']) used.add(`chart.source.${v}`)
+    for (const m of MARKETS) used.add(`market.name.${m.key}`)
     for (const v of ['few', 'both', 'faded', 'late', 'neither']) used.add(`rob.verdict.${v}`)
     for (const e of ['csv.empty', 'csv.columns', 'csv.few']) used.add(e)
     for (const l of navLinks('en')) used.add(l.key)
