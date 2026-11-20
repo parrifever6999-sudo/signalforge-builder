@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SOCIALS, loginUrl, navLinks, signupUrl, siteUrl } from './links'
+import { SOCIALS, UNLOCK_URL, loginUrl, navLinks, pricingUrl, signupUrl, siteUrl } from './links'
 
 // The header and the footer carry the same links as the SignalForge AI site.
 describe('links to the SignalForge AI site', () => {
@@ -13,6 +13,12 @@ describe('links to the SignalForge AI site', () => {
     expect(loginUrl('es')).toBe('https://dashboard.signalforge-ai.com/login?lang=es')
     expect(signupUrl('en')).toBe('https://www.signalforge-ai.com/signup?utm_source=builder&utm_medium=app')
     expect(signupUrl('es')).toBe('https://www.signalforge-ai.com/es/signup?utm_source=builder&utm_medium=app')
+  })
+
+  it('unlocking the script goes to the dashboard, the plans to the pricing page', () => {
+    expect(UNLOCK_URL).toBe('https://dashboard.signalforge-ai.com/builder?open=1')
+    expect(pricingUrl('en')).toBe('https://www.signalforge-ai.com/pricing/')
+    expect(pricingUrl('es')).toBe('https://www.signalforge-ai.com/es/precios/')
   })
 
   it('the menu has the docs, pricing and blog of the site', () => {

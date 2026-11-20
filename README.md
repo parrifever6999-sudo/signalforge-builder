@@ -5,7 +5,10 @@ in the browser, and take the Pine Script with you. The script already carries
 the alert messages that [SignalForge AI](https://www.signalforge-ai.com/) needs
 to place the orders on MetaTrader 5.
 
-Free, no account, nothing leaves your browser except the request for candles.
+Build and backtest free, no account needed; copy the script with your
+SignalForge plan (any plan, or the 14-day free trial). Nothing leaves your
+browser except the request for candles and one check with SignalForge of
+whether the script can be copied (with your pass, if you have one).
 
 **Open it:** https://builder.signalforge-ai.com/ (in Spanish: https://builder.signalforge-ai.com/?lang=es)
 
@@ -45,10 +48,24 @@ Free, no account, nothing leaves your browser except the request for candles.
     first 70%, then uncover the rest and see if it still works.
   - Monte Carlo: the same trades drawn at random 1,000 times, to see how much of
     the result is luck.
-- Copy or download the Pine Script v6 and paste it into TradingView.
+- Copy or download the Pine Script v6 and paste it into TradingView, with your
+  SignalForge plan (see "Copying the script" below).
 - Share a strategy as a link, save it to a file, or just come back later: the
   browser remembers what you were working on.
 - English and Spanish.
+
+## Copying the script
+
+Building, the backtest and the robustness checks are open to everyone. The
+script itself, the Copy and Download buttons and the alert message come with a
+SignalForge plan (Starter, Trader, Pro or Elite, paid or in the 14-day free
+trial). Until then the code panel shows the first lines of the script and
+blurred placeholder text where the rest goes.
+
+"Unlock with my plan" opens the SignalForge dashboard, which checks the plan and
+sends you back with a pass valid for 7 days. The pass is kept in this browser
+and sent only to `api.signalforge-ai.com` to be checked. What you built is kept
+in the browser too, so it is still on the canvas when you come back.
 
 ## How it works
 
@@ -213,6 +230,7 @@ src/
                and the check for higher-timeframe blocks short of history
   data/        candles from the exchange, CSV import, the offline sample series
   store/       app state, saving, share links, the built-in examples
+  access/      the SignalForge plan check that unlocks copying the script
   components/  toolbar, palette, chart, figures, code and MT5 panels
   nodes/       the block drawn on the canvas
   locales/     en.json and es.json
