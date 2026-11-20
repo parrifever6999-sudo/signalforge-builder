@@ -476,6 +476,9 @@ describe('trade management: what the script says', () => {
     expect(code).toContain(`if strategy.position_size > 0 and sfBars >= 12\n    strategy.close("Long", alert_message='{"action":"closebuy"`)
     expect(code).toContain(`if strategy.position_size < 0 and sfBars >= 12\n    strategy.close("Short", alert_message='{"action":"closesell"`)
     expect(generatePine(nodes, edges, 'X', settings(noExits)).code).not.toContain('sfBars')
+    expect(code).toContain('// Time exit: a trade still open after 12 bars is closed')
+    expect(generatePine(nodes, edges, 'X', settings({ ...noExits, maxBars: 1 })).code)
+      .toContain('// Time exit: a trade still open after 1 bar is closed')
   })
 
   it('sizing by risk: what the stop can take is a share of the balance', () => {

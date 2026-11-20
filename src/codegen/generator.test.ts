@@ -61,6 +61,15 @@ describe('generatePine: SignalForge alerts', () => {
     expect(code).toContain('lotSize = input.float(0.1, "Lot size (MT5)", minval=0.01, step=0.01)')
   })
 
+  // Seen in a live test: the alert said 0.01 and MT5 traded the account's
+  // fixed lot. The script must not promise that the lot in the alert is traded.
+  it('the lot comment says when SignalForge trades that lot', () => {
+    const { nodes, edges } = emaCrossGraph()
+    const { code } = generatePine(nodes, edges, 'X')
+    expect(code).toContain('SignalForge trades it when the position size of the account is "From the signal"')
+    expect(code).not.toContain('reads it from the alert')
+  })
+
   it('a fixed symbol replaces syminfo.ticker and loses anything that could break the JSON', () => {
     const { nodes, edges } = emaCrossGraph()
     const { code } = generatePine(nodes, edges, 'X', settings({

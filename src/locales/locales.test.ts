@@ -78,6 +78,17 @@ describe('locales', () => {
     expect(unused).toEqual([])
   })
 
+  // Both come from a live alert test (TradingView -> SignalForge -> MT5): the
+  // lot in the alert is traded only with that account setting, named as the
+  // SignalForge dashboard names it, and TradingView's alert window showed no
+  // "Order fills only" choice for these scripts, which never call alert().
+  it('the MT5 steps say what the live test showed', () => {
+    const dicts: Record<string, string>[] = [en, es]
+    expect(en['mt5.lotNote']).toContain('From the signal')
+    expect(es['mt5.lotNote']).toMatch(/El de la se.al/)
+    for (const dict of dicts) expect(dict['mt5.step2']).not.toMatch(/with the option|con la opci/)
+  })
+
   it('fills in the placeholders and falls back to the key', () => {
     expect(translate('en', 'stats.trades', { n: 12 })).toBe('Trades: 12')
     expect(translate('es', 'stats.trades', { n: 12 })).toBe('Operaciones: 12')

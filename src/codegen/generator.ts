@@ -390,7 +390,9 @@ export function generatePine(
     `commission_type=strategy.commission.percent, commission_value=${fmtNum(fee + slip)}, margin_long=0, margin_short=0)`,
     `// Cost per side: ${fmtNum(fee)}% commission + ${fmtNum(slip)}% slippage, charged together so it weighs the same on any symbol`,
     '',
-    '// Lot size sent to MT5 with every entry (SignalForge reads it from the alert)',
+    // Not "the lot MT5 trades": with a fixed lot or a % of risk set for the
+    // account in SignalForge, that size wins over the one in the alert.
+    '// Lot sent with every entry. SignalForge trades it when the position size of the account is "From the signal"',
     `lotSize = input.float(${fmtNum(Math.max(0.01, positive(st.lot, 0.1)))}, "Lot size (MT5)", minval=0.01, step=0.01)`,
     '',
     ...calc,
@@ -481,7 +483,7 @@ export function generatePine(
   if (maxBars > 0) {
     out.push(
       '',
-      `// Time exit: a trade still open after ${maxBars} bars is closed`,
+      `// Time exit: a trade still open after ${maxBars} ${maxBars === 1 ? 'bar' : 'bars'} is closed`,
       'var int sfBars = 0',
       'sfBars := strategy.position_size != 0 ? sfBars + 1 : 0',
     )

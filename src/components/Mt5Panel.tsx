@@ -57,6 +57,8 @@ export function Mt5Panel({ gen }: { gen: GenResult }) {
 
           <p className="fine">{t('mt5.sample')}</p>
           <pre className="code-block small">{sample}</pre>
+          {/* Seen live: with a fixed lot in the account, the lot in the alert is not the one traded. */}
+          <p className="fine">{t('mt5.lotNote')}</p>
           {hasBracket && <p className="fine">{t('mt5.stopNote')}</p>}
 
           <a className="cta" href={signupUrl(lang)} target="_blank" rel="noopener">{t('mt5.cta')}</a>

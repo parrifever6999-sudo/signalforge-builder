@@ -106,8 +106,9 @@ A backtest shows what would have happened, not what will happen.
   candles loaded are too few. With too few, the value depends on where the data
   starts, and TradingView, which loads another amount of history, shows a
   different one.
-- Sizing by risk changes the backtest only. The lot sent to MetaTrader 5 is the
-  fixed lot you set.
+- Sizing by risk changes the backtest only. The lot in the alert is the fixed
+  lot you set, and SignalForge trades that lot only when the account is set to
+  take the size from the signal (see "Sending it to MetaTrader 5").
 - No optimiser: it does not search for the best settings for you. That is on
   purpose. Settings found by search fit the past and tend to fail afterwards.
 
@@ -133,8 +134,29 @@ Pine Editor:
   history on the chart, the EMA 50 was up to 1% away. That is too little
   history for it, the case the app warns about.
 
-Not checked: a live alert from one of these scripts reaching MetaTrader 5, and
-markets other than BTCUSDT. TradingView draws at most 64 lines per script.
+The same day two of these scripts ran live on a 1-minute EURUSD chart, each
+with a TradingView alert whose message was `{{strategy.order.alert_message}}`
+and whose webhook was a SignalForge one, trading a demo MetaTrader 5 account:
+
+- Ten alerts fired, ten webhooks were delivered and ten orders were executed
+  in MetaTrader 5: `buy`, `sell`, `closebuy` and `closesell`. The closes came
+  from a stop (`strategy.exit`) in one script and from the time exit
+  (`strategy.close`) in the other.
+- From the webhook reaching SignalForge to MetaTrader 5 confirming the order
+  took between 0.28 and 0.45 seconds. Before that, TradingView took from under
+  a second to about 5 seconds to deliver each webhook after its own alert
+  time.
+- The five entries were filled within 0.2 pip of the price in TradingView's
+  list of trades, on a chart whose prices come from another source than the
+  broker's.
+- The alerts said lot 0.01 and MetaTrader 5 traded 0.1: the account had a
+  fixed lot set in SignalForge, and then that one is traded, not the one in
+  the alert.
+
+Not checked: the backtest on markets other than BTCUSDT, live alerts on
+symbols other than EURUSD or with more than one MetaTrader 5 account
+connected, and the lot of the alert being the one traded when the account
+takes it from the signal. TradingView draws at most 64 lines per script.
 
 ## Sending it to MetaTrader 5
 
@@ -144,9 +166,20 @@ Every order in the generated script has an alert message like this:
 {"action":"buy","symbol":"XAUUSD","lot":"0.1","strategy":"ema_9_21_cross"}
 ```
 
-In TradingView, create an alert on the strategy, choose "Order fills only", put
+In TradingView, create an alert on the strategy, put
 `{{strategy.order.alert_message}}` as the message and paste your SignalForge
-webhook address. TradingView needs a paid plan for webhooks.
+webhook address. If the alert window asks what should trigger it, choose
+"Order fills only" (it did not ask for these scripts, which never call
+`alert()`). TradingView needs a paid plan for webhooks.
+
+Two things SignalForge decides, not the script:
+
+- The lot. SignalForge trades the lot in the message only when the account's
+  position size is set to "From the signal". With a fixed lot or a percentage
+  of risk, the size set in SignalForge is the one traded.
+- The account. The message names none, so SignalForge sends it to every
+  MetaTrader 5 account you have connected, except those set to take only
+  signals addressed to them.
 
 The stop, the target, the trailing stop, the break-even and the time exit are
 worked out by the strategy in TradingView, which sends a close message when one
