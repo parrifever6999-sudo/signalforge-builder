@@ -58,7 +58,12 @@ export interface IndicatorDef {
   outputs: OutputDef[]
   legacy: boolean // still opens from old saves, no longer offered
   build: (a: BuildArgs) => string[] // the Pine lines that declare its variables
+  // Candles of its own timeframe the block needs: "first" before it gives a
+  // value at all, "settle" before where the data starts stops weighing on it.
+  warmup?: Warmup
 }
+
+export type Warmup = (len: number) => { first: number; settle: number }
 
 interface Opts {
   len?: number             // omitted = the block has no length
@@ -67,6 +72,7 @@ interface Opts {
   params?: ParamDef[]
   tf?: boolean
   legacy?: boolean
+  warmup?: Warmup
 }
 
 const P = (key: string, def: number, min: number, max: number, step = 1): ParamDef => ({ key, def, min, max, step })
@@ -90,6 +96,7 @@ function def(
     outputs,
     legacy: o.legacy ?? false,
     build,
+    warmup: o.warmup,
   }
 }
 
@@ -106,11 +113,25 @@ const macdLine = (src: string) => `ta.ema(${src}, 12) - ta.ema(${src}, 26)`
 // backtest here, TradingView's history and the live chart all see the same
 // thing and nothing repaints.
 const newBar = (tf: string) => `timeframe.change("${tf}")`
+// Candles of its timeframe, counted in lengths, until the value an average
+// starts from weighs under 2% of it: 3 for an EMA, 5 for the slower RSI.
+const EMA_SETTLE = 3
+const RSI_SETTLE = 5
+// Said in the script too: TradingView loads its own amount of history, and on a
+// chart with less than this the value is not yet the one of that timeframe.
+const needsHistory = (candles: number) =>
+  `// Worked out from the candles on the chart: it settles after about ${candles} candles of its timeframe`
+// The first candle of that timeframe in the data may be cut short by where the
+// data starts, so nothing is given until a whole one has gone by.
 const htfRunning = (pick: 'high' | 'low') => (a: BuildArgs) => [
   `var float ${a.v} = na`,
   `var float ${a.v}_run = na`,
+  `var int ${a.v}_n = 0`,
   `if ${newBar(a.tf)}`,
-  `    ${a.v} := ${a.v}_run`,
+  '    if bar_index > 0',
+  `        ${a.v}_n := ${a.v}_n + 1`,
+  `    if ${a.v}_n >= 2`,
+  `        ${a.v} := ${a.v}_run`,
   `    ${a.v}_run := ${pick}`,
   'else',
   `    ${a.v}_run := na(${a.v}_run) ? ${pick} : math.${pick === 'high' ? 'max' : 'min'}(${a.v}_run, ${pick})`,
@@ -244,24 +265,44 @@ export const INDICATORS: Record<IndicatorKind, IndicatorDef> = {
     ]),
   htf_high: def('Higher TF high', 'htf', { src: null, tf: true }, outs('price', ''), htfRunning('high')),
   htf_low: def('Higher TF low', 'htf', { src: null, tf: true }, outs('price', ''), htfRunning('low')),
-  htf_ema: def('Higher TF EMA', 'htf', { len: 50, src: null, tf: true }, outs('price', ''),
+  // The EMA and the RSI start the way TradingView's own do: no value until
+  // they have their length in candles of that timeframe, then the plain
+  // average of those, then the usual smoothing. Started any other way they
+  // would trade the first stretch of the data on a number that means nothing.
+  htf_ema: def('Higher TF EMA', 'htf',
+    { len: 50, src: null, tf: true, warmup: (len) => ({ first: len, settle: len * EMA_SETTLE }) }, outs('price', ''),
     ({ v, len, tf }) => [
+      needsHistory(len * EMA_SETTLE),
       `var float ${v} = na`,
+      `var float ${v}_sum = 0.0`,
+      `var int ${v}_n = 0`,
       `if ${newBar(tf)} and not na(close[1])`,
-      `    ${v} := na(${v}) ? close[1] : ${v} + (close[1] - ${v}) * 2.0 / ${len + 1}`,
+      `    ${v}_n := ${v}_n + 1`,
+      `    if ${v}_n <= ${len}`,
+      `        ${v}_sum := ${v}_sum + close[1]`,
+      `    ${v} := ${v}_n < ${len} ? na : ${v}_n == ${len} ? ${v}_sum / ${len} : ${v} + (close[1] - ${v}) * 2.0 / ${len + 1}`,
     ]),
-  htf_rsi: def('Higher TF RSI', 'htf', { len: 14, src: null, tf: true }, outs('own', ''),
+  htf_rsi: def('Higher TF RSI', 'htf',
+    { len: 14, src: null, tf: true, warmup: (len) => ({ first: len + 1, settle: len * RSI_SETTLE }) }, outs('own', ''),
     ({ v, len, tf }) => [
+      needsHistory(len * RSI_SETTLE),
       `var float ${v} = na`,
       `var float ${v}_prev = na`,
-      `var float ${v}_up = na`,
-      `var float ${v}_dn = na`,
+      `var float ${v}_up = 0.0`,
+      `var float ${v}_dn = 0.0`,
+      `var int ${v}_n = 0`,
       `if ${newBar(tf)} and not na(close[1])`,
       `    if not na(${v}_prev)`,
       `        ${v}_chg = close[1] - ${v}_prev`,
-      `        ${v}_up := na(${v}_up) ? math.max(${v}_chg, 0) : (${v}_up * ${len - 1} + math.max(${v}_chg, 0)) / ${len}`,
-      `        ${v}_dn := na(${v}_dn) ? math.max(-${v}_chg, 0) : (${v}_dn * ${len - 1} + math.max(-${v}_chg, 0)) / ${len}`,
-      `        ${v} := ${v}_dn == 0 ? 100.0 : 100 - 100 / (1 + ${v}_up / ${v}_dn)`,
+      `        ${v}_n := ${v}_n + 1`,
+      `        if ${v}_n <= ${len}`,
+      `            ${v}_up := ${v}_up + math.max(${v}_chg, 0) / ${len}`,
+      `            ${v}_dn := ${v}_dn + math.max(-${v}_chg, 0) / ${len}`,
+      '        else',
+      `            ${v}_up := (${v}_up * ${len - 1} + math.max(${v}_chg, 0)) / ${len}`,
+      `            ${v}_dn := (${v}_dn * ${len - 1} + math.max(-${v}_chg, 0)) / ${len}`,
+      `        if ${v}_n >= ${len}`,
+      `            ${v} := ${v}_dn == 0 ? 100.0 : 100 - 100 / (1 + ${v}_up / ${v}_dn)`,
       `    ${v}_prev := close[1]`,
     ]),
 

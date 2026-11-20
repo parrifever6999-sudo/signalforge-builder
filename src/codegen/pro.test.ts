@@ -301,14 +301,81 @@ describe('higher-timeframe blocks', () => {
     }
   })
 
-  it('the EMA is the EMA of the closes of that timeframe', async () => {
+  it('the EMA is the EMA of the closes of that timeframe, with no value before it has its length', async () => {
     const data = await series('htf_ema', { tf: '240', length: 10 })
+    const closes: number[] = []
     let ema = Number.NaN
     for (const i of opens4h) {
       const close = candles[i - 1].close
-      ema = Number.isNaN(ema) ? close : ema + (close - ema) * (2 / 11)
+      closes.push(close)
+      // TradingView's own EMA: nothing for the first candles, then their plain average, then the EMA.
+      if (closes.length < 10) { expect(Number.isFinite(data[i]), `bar ${i}`).toBe(false); continue }
+      ema = closes.length === 10 ? closes.reduce((a, b) => a + b, 0) / 10 : ema + (close - ema) * (2 / 11)
       expect(data[i]).toBeCloseTo(ema, 8)
     }
+    expect(closes.length).toBeGreaterThan(30)
+  })
+
+  it('on the timeframe of the chart they are the plain EMA and RSI, one candle late', async () => {
+    const { code, error } = generatePine(
+      [ind('e', 'htf_ema', { tf: '60', length: 10 }), ind('r', 'htf_rsi', { tf: '60', length: 14 }), plot('p1', 'E'), plot('p2', 'R')],
+      [edge('e', 'p1'), edge('r', 'p2')], 'X',
+    )
+    expect(error).toBeUndefined()
+    const { result, get } = await runWith(code, candles, {
+      ema: 'v_e', rsi: 'v_r', emaRef: 'ta.ema(close, 10)[1]', rsiRef: 'ta.rsi(close, 14)[1]',
+    })
+    expect(result.error).toBeUndefined()
+    for (const [mine, ref] of [['ema', 'emaRef'], ['rsi', 'rsiRef']] as const) {
+      const a = get(mine)
+      const b = get(ref)
+      let compared = 0
+      for (let i = 0; i < candles.length; i++) {
+        expect(Number.isFinite(a[i]), `${mine} at bar ${i}`).toBe(Number.isFinite(b[i]))
+        if (Number.isFinite(b[i])) { expect(a[i]).toBeCloseTo(b[i], 6); compared++ }
+      }
+      expect(compared).toBeGreaterThan(500)
+    }
+  })
+
+  it('a candle of that timeframe cut short by the start of the data is not given', async () => {
+    // The data starts at 02:00, in the middle of a 4-hour candle.
+    const late = hourlyCandles(120, Date.UTC(2024, 2, 1, 2))
+    const run = async (indicator: string) => {
+      const { code, plotMeta } = generatePine([ind('h', indicator, { tf: '240' }), plot('p', 'H')], [edge('h', 'p')], 'X')
+      const result = await runPine(code, late, plotMeta, { timeframe: '60' })
+      expect(result.error).toBeUndefined()
+      return result.plots[0].data
+    }
+    const highs = await run('htf_high')
+    const lows = await run('htf_low')
+    // Bars 0-1 are what is left of the first candle; the first whole one is bars 2-5.
+    for (let i = 0; i < 6; i++) {
+      expect(Number.isFinite(highs[i]), `high at bar ${i}`).toBe(false)
+      expect(Number.isFinite(lows[i]), `low at bar ${i}`).toBe(false)
+    }
+    for (let i = 6; i < 10; i++) {
+      expect(highs[i]).toBe(Math.max(...late.slice(2, 6).map((c) => c.high)))
+      expect(lows[i]).toBe(Math.min(...late.slice(2, 6).map((c) => c.low)))
+    }
+    expect(highs[10]).toBe(Math.max(...late.slice(6, 10).map((c) => c.high)))
+  })
+
+  it('the script says which blocks need history before their value can be trusted', () => {
+    const { needs } = generatePine(
+      [
+        ind('e', 'htf_ema', { tf: 'D', length: 50 }), ind('r', 'htf_rsi', { tf: 'W', length: 14 }),
+        ind('c', 'htf_close', { tf: 'D' }), ind('loose', 'htf_ema', { tf: 'W', length: 200 }),
+        plot('p1', 'E'), plot('p2', 'R'), plot('p3', 'C'),
+      ],
+      [edge('e', 'p1'), edge('r', 'p2'), edge('c', 'p3')], 'X',
+    )
+    // The close needs nothing, and the block wired to nothing is not in the script.
+    expect(needs).toEqual([
+      { indicator: 'htf_ema', tf: 'D', length: 50, first: 50, settle: 150 },
+      { indicator: 'htf_rsi', tf: 'W', length: 14, first: 15, settle: 70 },
+    ])
+    expect(generatePine([ind('e', 'ema'), plot('p')], [edge('e', 'p')], 'X').needs).toEqual([])
   })
 
   it('the RSI stays between 0 and 100 and moves once per candle of that timeframe', async () => {

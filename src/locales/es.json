@@ -392,6 +392,8 @@
   "warn.rrNeedsStop": "Un objetivo medido en stops necesita un stop. Elige un stop u otro tipo de objetivo.",
   "warn.beNeedsStop": "Un breakeven medido en stops necesita un stop. Elige un stop u otro tipo de breakeven.",
   "warn.riskNeedsStop": "Dimensionar por riesgo necesita un stop: sin \u00e9l no se sabe cu\u00e1nto puede perder una operaci\u00f3n. Se usa todo el saldo.",
+  "warn.htfEmpty": "{block} ({length}, {tf}) no da ning\u00fan valor con estos datos: el primero llega tras {first} velas terminadas de esa temporalidad y las velas cargadas contienen {have}. Lo que tenga conectado nunca se dispara. Carga m\u00e1s velas, o usa un periodo m\u00e1s corto o una temporalidad m\u00e1s baja.",
+  "warn.htfShort": "{block} ({length}, {tf}) tiene poca historia aqu\u00ed: {have} velas de esa temporalidad, y hacen falta unas {need} para que deje de pesarle el punto donde empiezan los datos. TradingView carga otra cantidad de historia, as\u00ed que all\u00ed su valor no ser\u00e1 el mismo. Carga m\u00e1s velas, o usa un periodo m\u00e1s corto o una temporalidad m\u00e1s baja.",
   "error.loop": "Dos bloques se alimentan en c\u00edrculo. Quita una de las conexiones.",
   "error.empty": "Todav\u00eda no hay nada que montar. Conecta una condici\u00f3n a una orden o dibuja algo en el gr\u00e1fico.",
   "code.title": "Pine Script v6",

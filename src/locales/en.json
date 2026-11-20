@@ -392,6 +392,8 @@
   "warn.rrNeedsStop": "A target measured in stops needs a stop. Pick a stop or another kind of target.",
   "warn.beNeedsStop": "A break-even measured in stops needs a stop. Pick a stop or another kind of break-even.",
   "warn.riskNeedsStop": "Sizing by risk needs a stop: without one there is no telling how much a trade can lose. The whole balance is used instead.",
+  "warn.htfEmpty": "{block} ({length}, {tf}) gives no value on this data: its first one comes after {first} finished candles of that timeframe and the candles loaded hold {have}. Whatever is wired to it never fires. Load more candles, or use a shorter length or a lower timeframe.",
+  "warn.htfShort": "{block} ({length}, {tf}) has little history here: {have} candles of that timeframe, and it takes about {need} for the point where the data starts to stop weighing on it. TradingView loads another amount of history, so its value there will not be the same. Load more candles, or use a shorter length or a lower timeframe.",
   "error.loop": "Two blocks feed each other in a circle. Remove one of the connections.",
   "error.empty": "Nothing to build yet. Connect a condition to an order, or draw something on the chart.",
   "code.title": "Pine Script v6",

@@ -99,10 +99,42 @@ A backtest shows what would have happened, not what will happen.
   time, so the hours filter will be off by that difference on imported files.
 - The higher-timeframe blocks are built by hand from the candles of the chart
   and only use candles that have closed. They do not call `request.security`.
+  Their EMA and RSI start like TradingView's own (no value until they have
+  their length) and they need history to settle: about 3 lengths of candles of
+  that timeframe for the EMA, 5 for the RSI. A weekly EMA 50 wants some 150
+  weeks, more than 10,000 hourly candles hold. The app tells you when the
+  candles loaded are too few. With too few, the value depends on where the data
+  starts, and TradingView, which loads another amount of history, shows a
+  different one.
 - Sizing by risk changes the backtest only. The lot sent to MetaTrader 5 is the
   fixed lot you set.
 - No optimiser: it does not search for the best settings for you. That is on
   purpose. Settings found by search fit the past and tend to fail afterwards.
+
+## Checked against TradingView
+
+On 20 November 2026 the scripts this app writes were pasted into TradingView's
+Pine Editor:
+
+- Every block compiles: the 49 indicators with all their outputs, every
+  condition, both time filters and every kind of stop, target, trailing stop,
+  break-even, time exit and sizing.
+- Seventeen strategies, long and short, were run in TradingView's Strategy
+  Tester and in this app's engine over the same 16,515 hourly candles of
+  BTCUSDT (Binance, from 1 January 2025). The closed trades (up to 4,644), the
+  winning trades and the profit factor were the same in all of them, and the
+  maximum drawdown to within 0.01 of a percentage point. Where no trade was
+  left open at the end, the net result matched to within a dollar on a 10,000
+  account. TradingView adds the trade still open to its total; this app leaves
+  it out and says so.
+- The higher-timeframe EMA and RSI were compared bar by bar with TradingView's
+  `ta.ema` and `ta.rsi`, and on 4-hour and daily candles with
+  `request.security`: no difference. On weekly candles, with 98 weeks of
+  history on the chart, the EMA 50 was up to 1% away. That is too little
+  history for it, the case the app warns about.
+
+Not checked: a live alert from one of these scripts reaching MetaTrader 5, and
+markets other than BTCUSDT. TradingView draws at most 64 lines per script.
 
 ## Sending it to MetaTrader 5
 
@@ -141,7 +173,8 @@ anywhere that serves files.
 src/
   blocks/      what each block is and the Pine it writes
   codegen/     graph -> Pine Script v6 (+ tests)
-  engine/      runs the script with PineTS; balance curve, out of sample, Monte Carlo
+  engine/      runs the script with PineTS; balance curve, out of sample, Monte Carlo,
+               and the check for higher-timeframe blocks short of history
   data/        candles from the exchange, CSV import, the offline sample series
   store/       app state, saving, share links, the built-in examples
   components/  toolbar, palette, chart, figures, code and MT5 panels

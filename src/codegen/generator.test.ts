@@ -292,10 +292,11 @@ describe('every indicator block', () => {
     expect(error).toBeUndefined()
     expect(warnings).toEqual([])
     expect(undeclared(code)).toEqual([])
-    const result = await runPine(code, hourlyCandles(600), plotMeta, { timeframe: '60' })
+    // The slowest to start is the 4-hour EMA 50: 200 hourly candles before its first value.
+    const result = await runPine(code, hourlyCandles(1000), plotMeta, { timeframe: '60' })
     expect(result.error).toBeUndefined()
     const values = result.plots[0].data.filter((v) => Number.isFinite(v))
-    expect(values.length).toBeGreaterThan(450)
+    expect(values.length).toBeGreaterThan(750)
     // A series stuck on one value would mean the block is not wired to the data.
     expect(new Set(values).size).toBeGreaterThan(1)
   })

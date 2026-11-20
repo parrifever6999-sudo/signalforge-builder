@@ -1,6 +1,6 @@
 import type { Node, Edge } from '@xyflow/react'
 import type {
-  BlockData, BuilderNode, ActionKind, SourceKind, PlotStyle, PlotMeta, StrategySettings, Issue,
+  BlockData, BuilderNode, ActionKind, SourceKind, PlotStyle, PlotMeta, StrategySettings, Issue, HtfNeed,
 } from '../types'
 import { DEFAULT_SETTINGS } from '../types'
 import {
@@ -13,6 +13,8 @@ export interface GenResult {
   warnings: Issue[]
   isStrategy: boolean
   plotMeta: PlotMeta[]
+  // Blocks of the script that need history of a higher timeframe to be trusted.
+  needs: HtfNeed[]
 }
 
 // What a block hands to the blocks wired after it. "price" says whether the
@@ -122,6 +124,7 @@ export function generatePine(
   incoming.forEach((list) => list.sort((x, y) => (x.handle ?? '').localeCompare(y.handle ?? '')))
 
   const calc: string[] = []
+  const needs: HtfNeed[] = []
   const warnings: Issue[] = []
   const warned = new Set<string>()
   const warn = (key: string) => {
@@ -177,9 +180,9 @@ export function generatePine(
             if (up?.type === 'bool') warn('warn.needsNumber')
           }
         }
-        calc.push(...def.build({
-          v, src: src.expr, len, p: paramValues(def, data.params), tf: isHtf(data.tf) ? data.tf : DEFAULT_HTF,
-        }))
+        const tf = isHtf(data.tf) ? data.tf : DEFAULT_HTF
+        calc.push(...def.build({ v, src: src.expr, len, p: paramValues(def, data.params), tf }))
+        if (def.warmup) needs.push({ indicator: data.indicator, tf, length: len, ...def.warmup(len) })
         const built: Built = new Map()
         for (const o of def.outputs) {
           built.set(o.key, {
@@ -324,17 +327,17 @@ export function generatePine(
 
   const isStrategy = actions.length > 0
   if (loop) {
-    return { code: '', error: { key: 'error.loop' }, warnings, isStrategy: false, plotMeta: [] }
+    return { code: '', error: { key: 'error.loop' }, warnings, isStrategy: false, plotMeta: [], needs: [] }
   }
   if (!isStrategy && plotLines.length === 0) {
-    return { code: '', error: { key: 'error.empty' }, warnings, isStrategy: false, plotMeta: [] }
+    return { code: '', error: { key: 'error.empty' }, warnings, isStrategy: false, plotMeta: [], needs: [] }
   }
 
   // ---- Assemble the script ----
   const out: string[] = ['//@version=6']
   if (!isStrategy) {
     out.push(`indicator("${escTitle(title)}", overlay=${overlay})`, '', ...calc, ...plotLines)
-    return { code: out.join('\n') + '\n', warnings, isStrategy, plotMeta }
+    return { code: out.join('\n') + '\n', warnings, isStrategy, plotMeta, needs }
   }
 
   const slug = strategySlug(title)
@@ -497,5 +500,5 @@ export function generatePine(
   }
 
   if (plotLines.length) out.push('', ...plotLines)
-  return { code: out.join('\n') + '\n', warnings, isStrategy, plotMeta }
+  return { code: out.join('\n') + '\n', warnings, isStrategy, plotMeta, needs }
 }

@@ -8,6 +8,7 @@ import {
   buyHoldCurve, buyHoldPct, downsample, equityCurve, monteCarlo, payoff, segmentStats, splitTrades,
   splitVerdict, streaks, HOLDOUT_RATIO, MIN_TRADES_MC,
 } from '../engine/robustness'
+import { htfNotices } from '../engine/warmup'
 
 // Under this many trades a result says little: luck weighs more than the idea.
 const FEW_TRADES = 30
@@ -55,6 +56,8 @@ export function StatsPanel({ gen }: { gen: GenResult }) {
   const streak = useMemo(() => streaks(seen), [seen])
   const seenBars = holdout ? split.cut : bars
   const bh = useMemo(() => buyHoldPct(candles, 0, seenBars), [candles, seenBars])
+  // Higher-timeframe blocks the candles loaded are too few for.
+  const short = useMemo(() => htfNotices(gen.needs, candles), [gen.needs, candles])
 
   const cost = settings.feePct + settings.slipPct
   const sizeText = t(`stats.size.${settings.sizeKind}`, { n: fmt(settings.sizeValue, settings.sizeValue % 1 ? 1 : 0) })
@@ -73,6 +76,17 @@ export function StatsPanel({ gen }: { gen: GenResult }) {
       {gen.warnings.map((w) => (
         <div key={w.key} className="notice warn">{t(w.key, w.params)}</div>
       ))}
+      {short.map((n) => {
+        const p = {
+          block: t(`block.${n.indicator}.label`), tf: t(`tf.${n.tf}`),
+          length: n.length, first: n.first, need: n.need, have: n.have,
+        }
+        return (
+          <div key={`${n.indicator}-${n.tf}-${n.length}`} className="notice warn">
+            {n.empty ? t('warn.htfEmpty', p) : t('warn.htfShort', p)}
+          </div>
+        )
+      })}
       {runResult && !runResult.ok && (
         <div className="notice error">{t('stats.error', { msg: runResult.error ?? '?' })}</div>
       )}

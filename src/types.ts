@@ -205,6 +205,17 @@ export interface Candle {
   closeTime?: number
 }
 
+// A block that needs candles of its timeframe before its value means anything:
+// "first" finished candles until it gives one at all, "settle" until where the
+// data starts no longer weighs on it.
+export interface HtfNeed {
+  indicator: IndicatorKind
+  tf: string
+  length: number
+  first: number
+  settle: number
+}
+
 // A message the UI translates: key into the locale files + its parameters.
 export interface Issue {
   key: string
