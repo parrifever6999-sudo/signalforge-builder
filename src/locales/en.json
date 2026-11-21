@@ -1,5 +1,5 @@
 {
-  "app.name": "Strategy Builder",
+  "app.name": "SFBuilder",
   "app.tagline": "Build a TradingView strategy with blocks, test it, send it to MT5.",
   "nav.docs": "Docs",
   "nav.pricing": "Pricing",

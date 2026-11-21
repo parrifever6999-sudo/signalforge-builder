@@ -1,4 +1,6 @@
-# SignalForge Strategy Builder
+# SFBuilder
+
+The strategy builder of SignalForge AI.
 
 Build a TradingView strategy by wiring blocks together, test it on real candles
 in the browser, and take the Pine Script with you. The script already carries

@@ -2,7 +2,7 @@
   "name": "signalforge-builder",
   "private": true,
   "version": "0.5.0",
-  "description": "Visual strategy builder: blocks to Pine Script v6, backtest in the browser, alerts ready for MetaTrader 5.",
+  "description": "SFBuilder, the visual strategy builder of SignalForge AI: blocks to Pine Script v6, backtest in the browser, alerts ready for MetaTrader 5.",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
