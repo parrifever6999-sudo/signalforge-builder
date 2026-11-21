@@ -97,6 +97,14 @@ describe('locales', () => {
     expect(translate('es', 'no.such.key')).toBe('no.such.key')
   })
 
+  it('the product is called SFBuilder in the header and the page title (21-nov-2026)', () => {
+    expect(en['app.name']).toBe('SFBuilder')
+    expect(es['app.name']).toBe('SFBuilder')
+    const html = readFileSync(join(SRC, '..', 'index.html'), 'utf8')
+    expect(html).toContain('<title>SFBuilder by SignalForge AI')
+    expect(html).not.toContain('Strategy Builder')
+  })
+
   it('the repository stays ASCII', () => {
     for (const file of [...sources(SRC), join(SRC, 'locales', 'en.json'), join(SRC, 'locales', 'es.json'), join(SRC, 'index.css')]) {
       const bytes = readFileSync(file)
